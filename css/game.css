@@ -16,13 +16,16 @@ html, body {
 }
 #game {
   display: block;
+  position: absolute;
+  left: 0;
+  top: 0;
   image-rendering: auto;
 }
 #ui {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 4;
+  z-index: 8;
 }
 #btnCover {
   pointer-events: auto;
@@ -64,17 +67,18 @@ html, body {
 #rightBtns {
   pointer-events: auto;
   position: absolute;
-  right: max(14px, env(safe-area-inset-right));
-  top: max(14px, env(safe-area-inset-top));
+  right: max(14px, env(safe-area-inset-right, 0px), var(--hud-safe-r, 0px));
+  top: max(14px, env(safe-area-inset-top, 0px), var(--hud-safe-t, 0px));
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: 8px;
-  z-index: 4;
+  z-index: 9;
 }
 #btnMute, #btnPause { display: none; }
 #rightBtns.vis #btnMute, #rightBtns.vis #btnPause { display: block; }
 #rightBtns button {
-  width: 48px; height: 48px;
+  width: 52px; height: 52px;
   border-radius: 10px;
   border: 1px solid rgba(255,255,255,0.25);
   background: rgba(0,0,0,0.5);
@@ -83,21 +87,97 @@ html, body {
   font-family: Oswald, sans-serif;
 }
 #btnFs {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   width: auto;
-  min-width: 48px;
-  padding: 0 10px;
-  font-size: 11px;
+  min-width: 52px;
+  height: 52px;
+  padding: 0 12px;
+  font-size: 13px;
   letter-spacing: 0.08em;
   cursor: pointer;
-}
-body.mode-title #btnFs {
-  min-width: 132px;
-  height: 54px;
-  font-size: 16px;
-  letter-spacing: 0.1em;
-  background: rgba(10,8,16,0.82);
-  border-color: rgba(255, 220, 140, 0.65);
+  background: rgba(10,8,16,0.9);
+  border: 2px solid rgba(255, 220, 140, 0.9);
   color: #ffe7b0;
+  font-family: Anton, sans-serif;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.55);
+}
+#btnFs .fs-ico { display: block; flex: 0 0 22px; }
+#btnFs .fs-lab { display: inline; white-space: nowrap; }
+body.mode-title #btnFs {
+  min-width: 220px;
+  height: 72px;
+  font-size: 22px;
+  letter-spacing: 0.1em;
+  padding: 0 18px;
+}
+/* In-game and true fullscreen: icon only (no EXIT label). */
+body:not(.mode-title) #btnFs .fs-lab,
+body.fs-true #btnFs .fs-lab { display: none; }
+body:not(.mode-title) #btnFs,
+body.fs-true #btnFs {
+  width: 52px;
+  min-width: 52px;
+  height: 52px;
+  padding: 0;
+}
+#fsPrompt {
+  pointer-events: auto;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  min-width: min(420px, 86%);
+  height: 72px;
+  padding: 0 28px;
+  border: 2px solid rgba(255, 220, 140, 0.95);
+  border-radius: 14px;
+  background: rgba(8, 6, 14, 0.94);
+  color: #ffe7b0;
+  font-family: Anton, sans-serif;
+  font-size: 26px;
+  letter-spacing: 0.08em;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+  cursor: pointer;
+}
+#fsPrompt[hidden] { display: none !important; }
+
+#fsHint {
+  pointer-events: auto;
+  position: absolute;
+  left: 50%;
+  top: max(10px, env(safe-area-inset-top));
+  transform: translateX(-50%);
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(520px, 92vw);
+  padding: 8px 10px 8px 14px;
+  border: 1px solid rgba(255,220,140,0.55);
+  border-radius: 10px;
+  background: rgba(8,6,14,0.88);
+  color: #ffe7b0;
+  font-family: Oswald, sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.03em;
+  text-align: left;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+}
+#fsHint[hidden] { display: none !important; }
+#fsHintDismiss {
+  pointer-events: auto;
+  flex: 0 0 28px;
+  width: 28px; height: 28px;
+  border: 0;
+  background: transparent;
+  color: #ffe7b0;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
 }
 #iosHint {
   position: absolute;

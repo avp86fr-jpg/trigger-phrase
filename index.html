@@ -18,13 +18,21 @@
     <canvas id="game" width="1920" height="1080"></canvas>
     <div id="ui">
       <button type="button" id="btnCover" aria-label="Hold to take cover and reload">HOLD COVER</button>
+      <button type="button" id="fsPrompt" hidden>TAP FOR FULLSCREEN</button>
       <div id="rightBtns">
-        <button type="button" id="btnFs" aria-label="Full screen" aria-pressed="false">FULL</button>
+        <button type="button" id="btnFs" aria-label="Full screen" aria-pressed="false">
+          <svg class="fs-ico" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M4 9V4h5v2H6v3H4zm10-5h5v5h-2V6h-3V4zM4 15h2v3h3v2H4v-5zm16 0v5h-5v-2h3v-3h2z"/></svg>
+          <span class="fs-lab">FULL SCREEN</span>
+        </button>
         <button type="button" id="btnMute" aria-label="Mute">BGM</button>
         <button type="button" id="btnPause" aria-label="Pause">II</button>
       </div>
     </div>
     <div id="tiltHint">ROTATE FOR THE FULL STAGE</div>
+    <div id="fsHint" hidden>
+      <span id="fsHintTxt">For true fullscreen: ⋮ → Open in Chrome</span>
+      <button type="button" id="fsHintDismiss" aria-label="Dismiss">×</button>
+    </div>
     <div id="iosHint" hidden>
       <p>For a full-screen game, tap Share, then Add to Home Screen.</p>
       <button type="button" id="iosHintDismiss">OK</button>

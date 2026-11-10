@@ -15,8 +15,15 @@
   const $pause = document.getElementById('btnPause');
   const $right = document.getElementById('rightBtns');
   const $fs = document.getElementById('btnFs');
+  const $fsLab = $fs && $fs.querySelector('.fs-lab');
+  const $fsPrompt = document.getElementById('fsPrompt');
+  const $fsHint = document.getElementById('fsHint');
+  const $fsHintTxt = document.getElementById('fsHintTxt');
+  const $fsHintDismiss = document.getElementById('fsHintDismiss');
   const $iosHint = document.getElementById('iosHint');
   const $iosHintDismiss = document.getElementById('iosHintDismiss');
+  const FS_ICO_ENTER = 'M4 9V4h5v2H6v3H4zm10-5h5v5h-2V6h-3V4zM4 15h2v3h3v2H4v-5zm16 0v5h-5v-2h3v-3h2z';
+  const FS_ICO_EXIT = 'M9 4H7v3H4v2h5V4zm6 0v5h5V7h-3V4h-2zM4 15h3v3h2v-5H4v2zm13 0v-2h-5v5h2v-3h3z';
 
   const IM = {};
   const off = document.createElement('canvas');
@@ -122,24 +129,39 @@
     return 768;
   }
 
+  function rasterizeImage(img, src) {
+    if (img && img.getContext) return img;
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, img.width);
+    cv.height = Math.max(1, img.height);
+    const g = cv.getContext('2d', { alpha: true });
+    g.drawImage(img, 0, 0);
+    cv._src = src || img.src || '';
+    return cv;
+  }
   async function loadImage(src) {
     const img = new Image();
-    img.decoding = 'async';
+    img.decoding = 'sync';
     img.src = src;
-    await img.decode();
+    try { await img.decode(); }
+    catch (e) {
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+    }
     const cap = capFor(src);
     if (cap && Math.max(img.width, img.height) > cap) {
       const sc = cap / Math.max(img.width, img.height);
       const cv = document.createElement('canvas');
       cv.width = Math.max(1, Math.round(img.width * sc));
       cv.height = Math.max(1, Math.round(img.height * sc));
-      const g = cv.getContext('2d');
+      const g = cv.getContext('2d', { alpha: true });
       g.imageSmoothingEnabled = true;
       g.imageSmoothingQuality = 'high';
       g.drawImage(img, 0, 0, cv.width, cv.height);
       cv._src = src;
       return cv;
     }
+    // Quantized P-mode PNGs flicker on first GPU upload; blit to RGBA first.
+    if (/\.png(\?|$)/i.test(src) || /\/cover\//.test(src)) return rasterizeImage(img, src);
     return img;
   }
 
@@ -255,7 +277,7 @@
     const DRESS_KITS = ['glacier','jungle','grove','stadium','arcade','lab','nave','web','foundry','hive','mind','mars','nexus'];
     DRESS_KITS.forEach((k) => {
       catalog('enemy_' + k, 'assets/chars/enemy_' + k + '.png');
-      ['walk0','walk1','walk2','pidle'].forEach((pose) => {
+      ['walk0','walk1','walk2','pidle','aim','fire'].forEach((pose) => {
         catalog('enemy_' + k + '_' + pose, 'assets/chars/enemy_' + k + '_' + pose + '.png');
       });
     });
@@ -307,7 +329,7 @@
     ['', '_aim', '_hit', '_death', '_idle2', '_walk0', '_walk1', '_walk2', '_fire', '_death0', '_death1', '_death2', '_pidle'].forEach((p) => keys.push('enemy_' + st.enemy + p));
     const dress = dressKeyFor(st);
     if (dress && dress !== st.enemy) {
-      ['', '_walk0', '_walk1', '_walk2', '_pidle'].forEach((p) => keys.push('enemy_' + dress + p));
+      ['', '_walk0', '_walk1', '_walk2', '_pidle', '_aim', '_fire'].forEach((p) => keys.push('enemy_' + dress + p));
     }
     fgCatalogKeys(st).forEach((k) => keys.push(k));
     if (st.motion && VEH_KIND[st.motion.kind]) keys.push(VEH_KIND[st.motion.kind]);
@@ -417,67 +439,137 @@
 
   function viewW() { return canvas.width || W; }
   function viewH() { return canvas.height || H; }
-  function layout() {
-    const r = document.getElementById('wrap').getBoundingClientRect();
-    // Portrait comics: use a tall 9:16 canvas so a single panel fills the phone, not a letterboxed 16:9 strip.
-    const comicPortrait = (G.mode === 'comic') && r.height > r.width * 1.15;
-    const cw = comicPortrait ? 1080 : W;
-    const ch = comicPortrait ? 1920 : H;
-    if (canvas.width !== cw || canvas.height !== ch) {
-      canvas.width = cw;
-      canvas.height = ch;
+  function designW() { return G.designW || W; }
+  function designH() { return G.designH || H; }
+  function applyPlayfield(c) {
+    const s = G.playScale || 1;
+    c.setTransform(s, 0, 0, s, G.playX || 0, G.playY || 0);
+  }
+  function bleedRect() {
+    const s = Math.max(1e-6, G.playScale || 1);
+    const mx = ((G.playX || 0) / s) + 80;
+    const my = ((G.playY || 0) / s) + 60;
+    return { x: -mx, y: -my, w: designW() + mx * 2, h: designH() + my * 2 };
+  }
+  function drawImageCover(c, img, x, y, w, h) {
+    if (!img) return;
+    const iw = img.width, ih = img.height;
+    if (!iw || !ih) return;
+    const sc = Math.max(w / iw, h / ih);
+    const dw = iw * sc, dh = ih * sc;
+    c.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+  }
+  function drawBleedCover(c, img, kenBurns) {
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    const cw = viewW(), ch = viewH();
+    c.fillStyle = '#000';
+    c.fillRect(0, 0, cw, ch);
+    if (!img) return;
+    const z = kenBurns ? (1.04 + Math.sin((G.titleT || 0) * 0.35) * 0.02) : 1.04;
+    const s = Math.max(cw / img.width, ch / img.height) * z;
+    c.drawImage(img, (cw - img.width * s) / 2, (ch - img.height * s) / 2, img.width * s, img.height * s);
+  }
+  function cssViewport() {
+    const vv = window.visualViewport;
+    if (vv && vv.width && vv.height) {
+      return { w: vv.width, h: vv.height, x: vv.offsetLeft || 0, y: vv.offsetTop || 0 };
     }
-    const scale = Math.min(r.width / cw, r.height / ch);
-    canvas.style.width = (cw * scale) + 'px';
-    canvas.style.height = (ch * scale) + 'px';
-    G.scale = scale;
+    const wrap = document.getElementById('wrap');
+    const r = wrap.getBoundingClientRect();
+    return { w: r.width, h: r.height, x: 0, y: 0 };
+  }
+  function setStyleIf(el, prop, val) {
+    if (el.style[prop] !== val) el.style[prop] = val;
+  }
+  function layout() {
+    const wrap = document.getElementById('wrap');
+    const vp = cssViewport();
+    const rw = Math.max(2, vp.w), rh = Math.max(2, vp.h);
+    // Portrait comics: tall 9:16 playfield so a panel fills the phone.
+    const comicPortrait = (G.mode === 'comic') && rh > rw * 1.15;
+    const dw = comicPortrait ? 1080 : W;
+    const dh = comicPortrait ? 1920 : H;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let bw = Math.max(2, Math.round(rw * dpr));
+    let bh = Math.max(2, Math.round(rh * dpr));
+    const maxEdge = 2560;
+    if (Math.max(bw, bh) > maxEdge) {
+      const k = maxEdge / Math.max(bw, bh);
+      bw = Math.max(2, Math.round(bw * k));
+      bh = Math.max(2, Math.round(bh * k));
+    }
+    // Never reset the bitmap unless the backing size actually changed.
+    if (canvas.width !== bw || canvas.height !== bh) {
+      canvas.width = bw;
+      canvas.height = bh;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+    }
+    const cssW = rw + 'px', cssH = rh + 'px', cssX = vp.x + 'px', cssY = vp.y + 'px';
+    setStyleIf(canvas, 'position', 'absolute');
+    setStyleIf(canvas, 'left', cssX);
+    setStyleIf(canvas, 'top', cssY);
+    setStyleIf(canvas, 'width', cssW);
+    setStyleIf(canvas, 'height', cssH);
+    const fit = Math.min(bw / dw, bh / dh);
+    G.designW = dw;
+    G.designH = dh;
+    G.playScale = fit;
+    G.playW = dw * fit;
+    G.playH = dh * fit;
+    G.playX = (bw - G.playW) / 2;
+    G.playY = (bh - G.playH) / 2;
+    G.scale = fit / Math.max(1e-6, dpr);
     G.css = canvas.getBoundingClientRect();
-    G.loFi = scale < 0.42 || (r.width < 700);
+    G.loFi = G.scale < 0.42 || rw < 700;
     G.portraitComic = comicPortrait;
     document.body.classList.toggle('comic-portrait', !!comicPortrait);
     layoutHud();
   }
-  // Pin the HUD to the letterboxed canvas so HOLD COVER / FULL / BGM
-  // sit fully on the visible stage, not in the side/top letterbox
-  // where they get clipped by the stage edge or a notch.
+  // Pin the HUD to the 16:9 (or 9:16 comic) safe playfield so HOLD COVER / FULL / BGM
+  // sit fully on the visible stage, not in the side bleed or under a notch.
   function layoutHud() {
     const wrapEl = document.getElementById('wrap');
     const ui = document.getElementById('ui');
     if (!wrapEl || !ui) return;
     const wr = wrapEl.getBoundingClientRect();
     const cv = canvas.getBoundingClientRect();
-    const left = Math.max(0, cv.left - wr.left);
-    const top = Math.max(0, cv.top - wr.top);
-    ui.style.left = left + 'px';
-    ui.style.top = top + 'px';
-    ui.style.width = Math.max(0, cv.width) + 'px';
-    ui.style.height = Math.max(0, cv.height) + 'px';
-    ui.style.right = 'auto';
-    ui.style.bottom = 'auto';
+    const s = cv.width / Math.max(1, viewW());
+    const left = (cv.left - wr.left) + (G.playX || 0) * s;
+    const top = (cv.top - wr.top) + (G.playY || 0) * s;
+    const pw = (G.playW || viewW()) * s;
+    const ph = (G.playH || viewH()) * s;
+    setStyleIf(ui, 'left', left + 'px');
+    setStyleIf(ui, 'top', top + 'px');
+    setStyleIf(ui, 'width', Math.max(0, pw) + 'px');
+    setStyleIf(ui, 'height', Math.max(0, ph) + 'px');
+    setStyleIf(ui, 'right', 'auto');
+    setStyleIf(ui, 'bottom', 'auto');
     ui.style.inset = 'auto';
-    // If the stage already clears a notch, don't double-apply the inset;
-    // only the leftover safe-area that still overlaps the stage.
     const cs = window.getComputedStyle(document.documentElement);
     const num = (v) => { const n = parseFloat(v); return isFinite(n) ? n : 0; };
     const safeL = Math.max(0, num(cs.getPropertyValue('env(safe-area-inset-left)')) || 0);
     const safeR = Math.max(0, num(cs.getPropertyValue('env(safe-area-inset-right)')) || 0);
     const safeT = Math.max(0, num(cs.getPropertyValue('env(safe-area-inset-top)')) || 0);
     const safeB = Math.max(0, num(cs.getPropertyValue('env(safe-area-inset-bottom)')) || 0);
-    // env() can't be read from getPropertyValue on html in all browsers;
-    // also set CSS variables from a probe element as fallback.
     ui.style.setProperty('--hud-safe-l', Math.max(0, safeL - left) + 'px');
-    ui.style.setProperty('--hud-safe-r', Math.max(0, safeR - (wr.width - (left + cv.width))) + 'px');
+    ui.style.setProperty('--hud-safe-r', Math.max(0, safeR - (wr.width - (left + pw))) + 'px');
     ui.style.setProperty('--hud-safe-t', Math.max(0, safeT - top) + 'px');
-    ui.style.setProperty('--hud-safe-b', Math.max(0, safeB - (wr.height - (top + cv.height))) + 'px');
+    ui.style.setProperty('--hud-safe-b', Math.max(0, safeB - (wr.height - (top + ph))) + 'px');
   }
-  window.addEventListener('resize', layout);
-  window.addEventListener('orientationchange', () => setTimeout(layout, 200));
+  let _layoutRaf = 0;
+  function requestLayout() {
+    if (_layoutRaf) return;
+    _layoutRaf = requestAnimationFrame(() => { _layoutRaf = 0; layout(); });
+  }
+  window.addEventListener('resize', requestLayout);
+  window.addEventListener('orientationchange', () => setTimeout(requestLayout, 200));
   if (window.visualViewport) {
-    visualViewport.addEventListener('resize', layout);
-    visualViewport.addEventListener('scroll', layout);
+    visualViewport.addEventListener('resize', requestLayout);
+    visualViewport.addEventListener('scroll', requestLayout);
   }
-  document.addEventListener('fullscreenchange', layout);
-  document.addEventListener('webkitfullscreenchange', layout);
+  document.addEventListener('fullscreenchange', requestLayout);
+  document.addEventListener('webkitfullscreenchange', requestLayout);
 
   function applySettingsChrome() {
     const s = G.save || defaultSave();
@@ -490,7 +582,7 @@
     const d = (G.save && G.save.difficulty) || 'normal';
     const cfg = {
       easy:   { hp: 8, lives: 5, telMul: 1.4, assist: 70, bossHpMul: 0.75, name: 'EASY' },
-      normal: { hp: 5, lives: 3, telMul: 1.0, assist: 44, bossHpMul: 1.00, name: 'NORMAL' },
+      normal: { hp: 5, lives: 3, telMul: 1.36, assist: 44, bossHpMul: 1.00, name: 'NORMAL' },
       hard:   { hp: 4, lives: 3, telMul: 0.70, assist: 0,  bossHpMul: 1.15, name: 'HARD' },
     }[d] || { hp: 5, lives: 3, telMul: 1, assist: 38, bossHpMul: 1, name: 'NORMAL' };
     const out = Object.assign({}, cfg);
@@ -568,23 +660,29 @@
       y: v.z * (wy - H / 2 - v.cy) + H / 2
     };
   }
+  function canvasPxToDesign(sx, sy) {
+    const s = Math.max(1e-6, G.playScale || 1);
+    return { x: (sx - (G.playX || 0)) / s, y: (sy - (G.playY || 0)) / s };
+  }
   function toWorld(clientX, clientY) {
     const r = canvas.getBoundingClientRect();
     G.css = r;
     const vw = viewW(), vh = viewH();
-    const sx = clamp((clientX - r.left) / Math.max(1e-6, r.width) * vw, 0, vw);
+    const sx = (clientX - r.left) / Math.max(1e-6, r.width) * vw;
     const sy = (clientY - r.top) / Math.max(1e-6, r.height) * vh;
-    const syC = clamp(sy, 0, vh);
-    return canvasToWorld(sx, syC);
+    const d = canvasPxToDesign(sx, sy);
+    return canvasToWorld(d.x, d.y);
   }
 
   function isCoverTarget(el) {
     return el === $coverBtn || $coverBtn.contains(el);
   }
   function isUiTarget(el) {
-    return el === $mute || el === $pause || el === $fs || el === $iosHint || el === $iosHintDismiss
+    return el === $mute || el === $pause || el === $fs || el === $fsPrompt || el === $fsHint
+      || el === $fsHintDismiss || el === $iosHint || el === $iosHintDismiss
       || ($mute && $mute.contains(el)) || ($pause && $pause.contains(el))
-      || ($fs && $fs.contains(el)) || ($iosHint && $iosHint.contains(el));
+      || ($fs && $fs.contains(el)) || ($fsPrompt && $fsPrompt.contains(el))
+      || ($fsHint && $fsHint.contains(el)) || ($iosHint && $iosHint.contains(el));
   }
 
   function isAppleTouch() {
@@ -596,6 +694,25 @@
   }
   function isFs() {
     return !!(document.fullscreenElement || document.webkitFullscreenElement || document.documentElement.classList.contains('pseudo-fs'));
+  }
+  function isDisplayStandalone() {
+    try {
+      return window.matchMedia('(display-mode: fullscreen)').matches
+        || window.matchMedia('(display-mode: standalone)').matches
+        || window.navigator.standalone === true;
+    } catch (err) { return false; }
+  }
+  function viewportFillsScreen() {
+    const vp = cssViewport();
+    const sw = screen.width || 0, sh = screen.height || 0;
+    if (!sw || !sh) return false;
+    return (vp.w * vp.h) >= 0.86 * sw * sh;
+  }
+  function isTrueFullscreen() {
+    if (isDisplayStandalone()) return true;
+    const el = document.fullscreenElement || document.webkitFullscreenElement;
+    if (!el) return false;
+    return viewportFillsScreen();
   }
   function isMobilePlay() {
     return window.matchMedia('(pointer: coarse)').matches
@@ -613,52 +730,96 @@
     if (on && isAppleTouch()) $iosHint.hidden = false;
     else $iosHint.hidden = true;
   }
-  function syncFsBtn() {
-    const on = isFs();
-    document.body.classList.toggle('fs-on', on);
-    if ($fs) {
-      $fs.setAttribute('aria-pressed', on ? 'true' : 'false');
-      $fs.textContent = on ? 'EXIT' : (document.body.classList.contains('mode-title') ? 'FULL SCREEN' : 'FULL');
-      $fs.setAttribute('aria-label', on ? 'Exit full screen' : 'Full screen');
-    }
+  function fsHintText() {
+    return isAppleTouch()
+      ? 'For true fullscreen: Add to Home Screen'
+      : 'For true fullscreen: ⋮ → Open in Chrome';
+  }
+  function showFsHint() {
+    if (!$fsHint) return;
+    if (!(isMobilePlay() || isAppleTouch())) { $fsHint.hidden = true; return; }
+    if (isTrueFullscreen() || isDisplayStandalone()) { $fsHint.hidden = true; return; }
+    if ($fsHintTxt) $fsHintTxt.textContent = fsHintText();
+    $fsHint.hidden = false;
+  }
+  function hideFsHint() {
+    if ($fsHint) $fsHint.hidden = true;
+  }
+  function showFsPrompt() {
+    if (!$fsPrompt) return;
+    if (isTrueFullscreen()) { $fsPrompt.hidden = true; return; }
+    if (!(isMobilePlay() || isAppleTouch())) { $fsPrompt.hidden = true; return; }
+    $fsPrompt.hidden = false;
+  }
+  function hideFsPrompt() {
+    if ($fsPrompt) $fsPrompt.hidden = true;
+  }
+  function afterFsAttempt() {
+    tryLockLandscape();
+    if (!isTrueFullscreen()) showFsHint();
+    else hideFsHint();
+    hideFsPrompt();
+    syncFsBtn();
     layout();
   }
-  async function tryEnterFullscreen() {
+  function syncFsBtn() {
+    const real = isTrueFullscreen();
+    const on = real; // only treat a filled-screen FS as "on" so Custom Tabs keep the expand icon
+    document.body.classList.toggle('fs-on', isFs());
+    document.body.classList.toggle('fs-true', real);
+    if ($fs) {
+      $fs.setAttribute('aria-pressed', on ? 'true' : 'false');
+      $fs.setAttribute('aria-label', on ? 'Exit full screen' : 'Full screen');
+      const path = $fs.querySelector('.fs-ico path');
+      if (path) path.setAttribute('d', on ? FS_ICO_EXIT : FS_ICO_ENTER);
+      if ($fsLab) $fsLab.textContent = 'FULL SCREEN';
+    }
+  }
+  // Must call requestFullscreen synchronously from a user click/tap.
+  // Android Chrome rejects the request if we await or setTimeout first.
+  function tryEnterFullscreen() {
     const el = document.documentElement;
-    try {
-      if (fsApiEnabled()) {
-        if (el.requestFullscreen) await el.requestFullscreen.call(el);
-        else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-      } else {
-        el.classList.add('pseudo-fs');
-        document.body.classList.add('pseudo-fs');
-        showA2hs(true);
-      }
-    } catch (err) {
+    if (isAppleTouch() || !fsApiEnabled()) {
       el.classList.add('pseudo-fs');
       document.body.classList.add('pseudo-fs');
-      if (isAppleTouch()) showA2hs(true);
+      showA2hs(isAppleTouch());
+      showFsHint();
+      syncFsBtn();
+      layout();
+      return;
     }
-    tryLockLandscape();
-    syncFsBtn();
-  }
-  async function exitFullscreen() {
+    let req = null;
     try {
-      if (document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen();
+      if (el.requestFullscreen) req = el.requestFullscreen.call(el);
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    } catch (err) {
+      showFsHint();
+      syncFsBtn();
+      return;
+    }
+    const finish = () => setTimeout(afterFsAttempt, 80);
+    if (req && typeof req.then === 'function') req.then(finish).catch(function () { showFsHint(); syncFsBtn(); layout(); });
+    else finish();
+  }
+  function exitFullscreen() {
+    try {
+      if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();
       else if (document.webkitFullscreenElement && document.webkitExitFullscreen) document.webkitExitFullscreen();
     } catch (err) {}
     document.documentElement.classList.remove('pseudo-fs');
     document.body.classList.remove('pseudo-fs');
     showA2hs(false);
     syncFsBtn();
+    layout();
   }
   function toggleFullscreen() {
-    if (isFs()) exitFullscreen();
+    if (isTrueFullscreen() || (isFs() && isAppleTouch())) exitFullscreen();
     else tryEnterFullscreen();
   }
   function maybeOfferFullscreen() {
-    if (isFs()) return;
-    if (isMobilePlay() || isAppleTouch()) tryEnterFullscreen();
+    // Do not auto-call requestFullscreen (gesture would already be gone).
+    if (isTrueFullscreen()) { hideFsPrompt(); hideFsHint(); return; }
+    if (isMobilePlay() || isAppleTouch()) showFsPrompt();
   }
 
   function setHiding(v) {
@@ -709,10 +870,12 @@
   $coverBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); setHiding(true); });
   $coverBtn.addEventListener('pointerup', (e) => { e.preventDefault(); e.stopPropagation(); setHiding(false); });
   $coverBtn.addEventListener('pointerleave', () => setHiding(false));
-  if ($fs) $fs.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); toggleFullscreen(); });
+  if ($fs) $fs.addEventListener('click', (e) => { e.stopPropagation(); toggleFullscreen(); });
+  if ($fsPrompt) $fsPrompt.addEventListener('click', (e) => { e.stopPropagation(); hideFsPrompt(); tryEnterFullscreen(); });
+  if ($fsHintDismiss) $fsHintDismiss.addEventListener('click', (e) => { e.stopPropagation(); hideFsHint(); });
   if ($iosHintDismiss) $iosHintDismiss.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); showA2hs(false); });
-  document.addEventListener('fullscreenchange', () => { if (isFs()) tryLockLandscape(); syncFsBtn(); });
-  document.addEventListener('webkitfullscreenchange', () => { if (isFs()) tryLockLandscape(); syncFsBtn(); });
+  document.addEventListener('fullscreenchange', () => { if (isFs()) tryLockLandscape(); afterFsAttempt(); });
+  document.addEventListener('webkitfullscreenchange', () => { if (isFs()) tryLockLandscape(); afterFsAttempt(); });
   $mute.addEventListener('click', (e) => { e.stopPropagation(); TPAudio.unlock(); TPAudio.toggleMute(); syncMute(); });
   $pause.addEventListener('click', (e) => { e.stopPropagation(); togglePause(); });
 
@@ -775,10 +938,11 @@
   }
 
   function tapTitle(x, y) {
-    if (hitBox(x, y, 960, 820, 300, 74)) { startStory(); return; }
-    if (hitBox(x, y, 960, 910, 300, 60)) { TPAudio.ui(); go('select'); return; }
-    if (G.save.checkpoint > 0 && hitBox(x, y, 700, 990, 240, 48)) { TPAudio.ui(); beginStage(Math.min(24, G.save.checkpoint), {}); return; }
-    const settingsAt = (G.save.checkpoint > 0) ? [1220, 990] : [960, 990];
+    // Buttons sit on the right so they don't cover the baked-in title logo on the Chaos key art.
+    if (hitBox(x, y, 1560, 770, 300, 74)) { startStory(); return; }
+    if (hitBox(x, y, 1560, 860, 300, 60)) { TPAudio.ui(); go('select'); return; }
+    if (G.save.checkpoint > 0 && hitBox(x, y, 1430, 950, 240, 48)) { TPAudio.ui(); beginStage(Math.min(24, G.save.checkpoint), {}); return; }
+    const settingsAt = (G.save.checkpoint > 0) ? [1690, 950] : [1560, 950];
     if (hitBox(x, y, settingsAt[0], settingsAt[1], 240, 48) || hitBox(x, y, 1740, 80, 220, 50)) { TPAudio.ui(); G.settingsFrom = 'title'; go('settings'); return; }
   }
   function hitBox(x, y, cx, cy, w, h) {
@@ -788,7 +952,7 @@
   function startStory() {
     TPAudio.ui();
     TPAudio.unlock();
-    maybeOfferFullscreen();
+    tryEnterFullscreen();
     if (!G.save.intro) {
       openComic(TPStages.COMICS.intro, () => { G.save.intro = true; writeSave(); beginStage(0); });
     } else {
@@ -1766,7 +1930,11 @@
 
   function spawnShot(x, y, tx, ty, kind, speed, spread) {
     const ang = Math.atan2(ty - y, tx - x) + (spread || 0) * 0.12;
-    const spd = (speed || 620) * (isTouchRail() ? 0.84 : (isHardTouch() ? 0.96 : 1));
+    const diff = ((G.save && G.save.difficulty) || 'normal');
+    // Front-facing bolts read later than the old sideways tracers; give
+    // Normal/Easy a slightly slower inbound so cover and the telegraph stay fair.
+    const difficultySpd = diff === 'hard' ? 1.06 : (diff === 'easy' ? 0.78 : 0.80);
+    const spd = (speed || 620) * (isTouchRail() ? 0.84 : (isHardTouch() ? 0.96 : 1)) * difficultySpd;
     const life = 0.85;
     G.entities.push({
       type: 'shot', kind: kind || 'bolt', x: x, y: y,
@@ -2095,6 +2263,13 @@
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.fillStyle = '#000';
     c.fillRect(0, 0, viewW(), viewH());
+    if (G.mode === 'title') drawBleedCover(c, IM.cover, true);
+    else if (G.mode === 'stagecard') drawBleedCover(c, G.stage ? bgImageFor(G.stage) : null, false);
+    else if (G.mode === 'play' || G.mode === 'paused' || G.mode === 'continue') {
+      drawBleedCover(c, G.stage ? bgImageFor(G.stage) : null, false);
+    }
+    c.save();
+    applyPlayfield(c);
     if (G.mode === 'intro') drawIntro(c);
     else if (G.mode === 'title') drawTitle(c);
     else if (G.mode === 'settings') drawSettings(c);
@@ -2104,12 +2279,16 @@
     else if (G.mode === 'credits') drawCredits(c);
     else if (G.mode === 'play' || G.mode === 'paused' || G.mode === 'continue') {
       drawWorld(c);
+      applyPlayfield(c);
       drawScreenCrack(c);
       if (!(G.bossIntro > 0)) drawHud(c);
       if (G.bossIntro > 0) drawBossSplash(c);
       if (G.mode === 'paused') drawPause(c);
       if (G.mode === 'continue') drawContinue(c);
     } else if (G.mode === 'result') drawResult(c);
+    applyPlayfield(c);
+    drawCursor(c);
+    c.restore();
     if (G.wipe && window.TPMotion) {
       c.setTransform(1, 0, 0, 1, 0, 0);
       TPMotion.drawWipe(c, G, viewW(), viewH());
@@ -2119,7 +2298,6 @@
       c.fillStyle = 'rgba(0,0,0,' + (a * 0.85) + ')';
       c.fillRect(0, 0, viewW(), viewH());
     }
-    drawCursor(c);
   }
 
   function worldTransform(c) {
@@ -2127,7 +2305,13 @@
     const shx = (Math.random() - 0.5) * G.shake + kick * 5;
     const shy = (Math.random() - 0.5) * G.shake + kick * 9;
     const z = G.cam.z * (1 + kick * 0.012), cx = G.cam.x * W, cy = G.cam.y * H + G.hideAmt * 70;
-    c.setTransform(z, 0, 0, z, W / 2 - (W / 2 + cx) * z + shx, H / 2 - (H / 2 + cy) * z + shy);
+    const s = G.playScale || 1;
+    const px = G.playX || 0, py = G.playY || 0;
+    c.setTransform(
+      s * z, 0, 0, s * z,
+      px + s * (W / 2 - (W / 2 + cx) * z + shx),
+      py + s * (H / 2 - (H / 2 + cy) * z + shy)
+    );
   }
 
   function drawWorld(c) {
@@ -2142,7 +2326,7 @@
     for (const e of list) if (e.type === 'pickup' || e.type === 'bonus' || e.type === 'secret') drawPickup(c, e);
     for (const e of list) if (e.type === 'shot') drawShot(c, e);
     drawParts(c);
-    c.setTransform(1, 0, 0, 1, 0, 0);
+    applyPlayfield(c);
     drawWhip(c);
     if (!drawFgPlate(c, G.stage) && window.TPFeel) TPFeel.drawFgProps(c, G.stage, W, H, G.t, G.cam.x);
     drawForegroundCover(c);
@@ -2163,12 +2347,14 @@
     return IM[st.bg] || null;
   }
 
-  function drawScrolling(c, img, xOff, y, h, over) {
+  function drawScrolling(c, img, xOff, y, h, over, xMin, xMax) {
     if (!img) return;
     const dw = (img.width / img.height) * h;
     const o = over || 0;
-    let x = -(((xOff % dw) + dw) % dw) - o;
-    while (x < W + o + 80) {
+    const left = (xMin == null ? -o : xMin) - o;
+    const right = (xMax == null ? W + o + 80 : xMax);
+    let x = left - (((xOff % dw) + dw) % dw);
+    while (x < right) {
       c.drawImage(img, x, y, dw, h);
       x += dw;
     }
@@ -2192,37 +2378,41 @@
       // One full-bleed scrolling plate — no far/mid slice of the same art (those left hard horizontal seams).
       const scroll = G.railX * 0.55, near = G.railX * 1.15;
       const src = (G.plateBlend || 0) > 0.5 && imgB ? imgB : img;
-      drawScrolling(c, src, scroll, -90, H + 180, 40);
+      const br = bleedRect();
+      drawScrolling(c, src, scroll, br.y, br.h, 40, br.x, br.x + br.w);
       if (imgB && (G.plateBlend || 0) > 0.02 && (G.plateBlend || 0) < 0.98) {
         c.save();
         c.globalAlpha = G.plateBlend;
-        drawScrolling(c, imgB, scroll, -90, H + 180, 40);
+        drawScrolling(c, imgB, scroll, br.y, br.h, 40, br.x, br.x + br.w);
         c.restore();
       }
       drawDeck(c, mot.kind, near, st);
     } else if (img) {
       const px = -(G.cam.x || 0) * 70;
       const py = -(G.cam.y || 0) * 28;
-      // Single overscanned plate. A second, differently scaled copy at 0.85 alpha caused brightness bands.
-      c.drawImage(img, -80 + px, -60 + py, W + 160, H + 120);
+      const br = bleedRect();
+      // Cover-fit the plate into the overscanned bleed (fills side/top gaps).
+      drawImageCover(c, img, br.x + px, br.y + py, br.w, br.h);
       if (imgB && (G.plateBlend || 0) > 0.01) {
         c.save();
         c.globalAlpha = G.plateBlend;
-        c.drawImage(imgB, -80 + px, -60 + py, W + 160, H + 120);
+        drawImageCover(c, imgB, br.x + px, br.y + py, br.w, br.h);
         c.restore();
       }
       G._holdBg = null;
     } else if (G._holdBg) {
-      c.drawImage(G._holdBg, -80, -60, W + 160, H + 120);
+      const br = bleedRect();
+      drawImageCover(c, G._holdBg, br.x, br.y, br.w, br.h);
     } else {
       drawProcBg(c, st);
     }
     const pal = st.palette || ['#000', '#333', '#fff'];
+    const br2 = bleedRect();
     const g = c.createLinearGradient(0, 0, 0, H);
     g.addColorStop(0, pal[0] + '00');
     g.addColorStop(1, 'rgba(0,0,0,0.18)');
     c.fillStyle = g;
-    c.fillRect(-80, -60, W + 160, H + 120);
+    c.fillRect(br2.x, br2.y, br2.w, br2.h);
     if (window.TPFeel) TPFeel.drawLighting(c, st, W, H);
     if (!G.loFi) {
       drawAtmos(c, st);
@@ -3592,12 +3782,9 @@
   }
 
   function drawTitle(c) {
-    const z = 1.04 + Math.sin(G.titleT * 0.35) * 0.02;
-    c.save();
-    c.translate(W / 2, H / 2); c.scale(z, z); c.translate(-W / 2, -H / 2);
+    // Bleed already painted a cover-fit of the key art; also draw a sharp unzoomed
+    // 16:9 copy in the safe playfield so the baked-in logo is never cropped.
     if (IM.cover) c.drawImage(IM.cover, 0, 0, W, H);
-    else c.fillRect(0, 0, W, H);
-    c.restore();
     c.fillStyle = 'rgba(0,0,0,' + (0.08 + Math.sin(G.titleT * 1.2) * 0.03) + ')';
     c.fillRect(0, 0, W, H);
     // light sweep
@@ -3616,13 +3803,13 @@
     const appear = clamp(G.titleT / 0.6, 0, 1);
     c.globalAlpha = appear;
     const pulse = 0.85 + 0.15 * Math.sin(G.titleT * 3);
-    button(c, 960, 820, 300, 74, 'START', true, pulse);
-    button(c, 960, 910, 300, 60, 'STAGE SELECT', false, 1);
+    button(c, 1560, 770, 300, 74, 'START', true, pulse);
+    button(c, 1560, 860, 300, 60, 'STAGE SELECT', false, 1);
     if (G.save.checkpoint > 0) {
-      button(c, 700, 990, 240, 48, 'CONTINUE', false, 1);
-      button(c, 1220, 990, 240, 48, 'SETTINGS', false, 1);
+      button(c, 1430, 950, 240, 48, 'CONTINUE', false, 1);
+      button(c, 1690, 950, 240, 48, 'SETTINGS', false, 1);
     } else {
-      button(c, 960, 990, 240, 48, 'SETTINGS', false, 1);
+      button(c, 1560, 950, 240, 48, 'SETTINGS', false, 1);
     }
     c.globalAlpha = 1;
     c.fillStyle = 'rgba(255,255,255,0.55)';
@@ -3648,7 +3835,7 @@
   function drawComic(c) {
     const com = G.comic;
     if (!com || !window.TPComic) return;
-    const vw = viewW(), vh = viewH();
+    const vw = designW(), vh = designH();
     if (!com.ready) {
       c.fillStyle = '#1a1410';
       c.fillRect(0, 0, vw, vh);
@@ -3974,15 +4161,21 @@
     const ease = 1 - Math.pow(1 - ps, 3);
     const boss = IM['boss_' + st.boss.id] || IM['p_' + st.boss.id];
     if (boss) {
-      const h = 820, w = h * (boss.width / boss.height);
-      const bx = W - w + (1 - ease) * 460;
-      const by = H - h + 20;
+      const padR = 48, padB = 48, padT = 90, padL = 980;
+      const maxW = Math.max(280, W - padL - padR);
+      const maxH = Math.max(280, H - padT - padB);
+      const aspect = (boss.width || 1) / Math.max(1, boss.height || 1);
+      let h = Math.min(820, maxH);
+      let w = h * aspect;
+      if (w > maxW) { w = maxW; h = w / aspect; }
+      const bx = W - w - padR + (1 - ease) * (w + 80);
+      const by = H - h - padB;
       c.save();
       c.fillStyle = 'rgba(8,6,10,0.78)';
-      c.fillRect(bx - 28, by - 16, w + 48, h + 20);
+      c.fillRect(bx - 28, by - 16, w + 48, h + 36);
       c.strokeStyle = '#ffd056';
       c.lineWidth = 4;
-      c.strokeRect(bx - 28, by - 16, w + 48, h + 20);
+      c.strokeRect(bx - 28, by - 16, w + 48, h + 36);
       c.fillStyle = '#ffd056';
       c.font = '800 28px Anton, sans-serif';
       c.textAlign = 'left';
@@ -4286,7 +4479,8 @@
     applySettingsChrome, diffCfg, ensureBox, stepSim, skipPresentation,
     spawnEntity, setWeapon, tryRhythmReload, startBoss, ensureStageAssets, prefetchStage,
     viewXform, canvasToWorld, worldToCanvas, toWorld,
-    toggleFullscreen, tryEnterFullscreen, exitFullscreen, isFs,
+    toggleFullscreen, tryEnterFullscreen, exitFullscreen, isFs, isTrueFullscreen,
+    canvasPxToDesign, applyPlayfield,
     get mode() { return G.mode; },
     get player() { return G.player; },
     get entities() { return G.entities; },
