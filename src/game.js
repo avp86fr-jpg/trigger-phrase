@@ -827,6 +827,7 @@
     G.cam = { x: 0, y: 0, z: 1, tx: 0, ty: 0, tz: 1.06 };
     G.plateBlend = 0; G.plateT = 0; G.usePlateB = false;
     G.shake = 0;
+    G.screenCrack = 0;
     G.hideAmt = 0;
     G.hiding = false;
     G.flash = 0;
@@ -1710,46 +1711,53 @@
     e.state = 'shoot'; e.stateT = 0; e.recoil = 1.7; e.recoilHold = 0.07; if (e.type === 'boss') e.atkN = (e.atkN || 0) + 1;
     TPAudio.enemyShot();
     haptic(8);
-    const originX = e.x + (e.x < W / 2 ? 58 : -58) * (e.scale || 1);
-    const originY = e.y - 200 * (e.scale || 1);
-    allocP({ k: 'emuzzle', x: originX, y: originY, life: 0.12, t: 0, s: 2.15, star: 1 });
-    allocP({ k: 'groundpop', x: e.x, y: e.y - 6, life: 0.18, t: 0, s: 1.5 });
-    burst(originX, originY, '#fff3a0', 18);
-    burst(originX, originY, '#ff8020', 10);
+    // Muzzle sits on the weapon, aimed at the player/camera — not off to the side.
+    const originX = e.x;
+    const originY = e.y - 250 * (e.scale || 1);
+    allocP({ k: 'emuzzle', x: originX, y: originY, life: 0.14, t: 0, s: 2.4, star: 1 });
+    burst(originX, originY, '#fff3a0', 14);
+    burst(originX, originY, '#ff8020', 8);
     const phase = e.type === 'boss' ? (G.bossPhase || 1) : 1;
-    // distinct patterns: grunts fire one bolt; bosses add a slow shootable orb and spreads
     const bolts = e.type === 'boss' ? (phase === 3 ? 3 : phase === 2 ? 2 : 1) : 1;
     for (let i = 0; i < bolts; i++) {
-      const spread = (i - (bolts - 1) / 2) * 0.28;
-      spawnShot(originX, originY, W / 2 + Math.sin(spread) * 420, H * 0.62, 'bolt', 540 + phase * 40, spread);
+      const spread = (i - (bolts - 1) / 2) * 0.16;
+      spawnShot(originX, originY, W / 2 + Math.sin(spread) * 90, H * 0.94, 'bolt', 680 + phase * 40, spread);
     }
     if (e.type === 'boss' && phase >= 2) {
-      spawnShot(originX, originY - 20, W / 2 + rand(-60, 60), H * 0.58, 'orb', 240, 0);
+      spawnShot(originX, originY - 16, W / 2 + rand(-40, 40), H * 0.90, 'orb', 280, 0);
     }
   }
 
   function spawnShot(x, y, tx, ty, kind, speed, spread) {
-    const ang = Math.atan2(ty - y, tx - x) + (spread || 0) * 0.15;
-    const spd = (speed || 520) * (isTouchRail() ? 0.84 : (isHardTouch() ? 0.96 : 1));
+    const ang = Math.atan2(ty - y, tx - x) + (spread || 0) * 0.12;
+    const spd = (speed || 620) * (isTouchRail() ? 0.84 : (isHardTouch() ? 0.96 : 1));
+    const life = 0.85;
     G.entities.push({
       type: 'shot', kind: kind || 'bolt', x: x, y: y,
+      x0: x, y0: y, tx: tx, ty: ty,
       vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd,
       alive: true, hit: true, state: 'fly', stateT: 0,
-      scale: kind === 'orb' ? 1.15 : 0.8, life: 2.4, rot: ang,
-      box: { x: x, y: y, hw: kind === 'orb' ? 38 : 18, hh: kind === 'orb' ? 38 : 18 }
+      scale: kind === 'orb' ? 0.7 : 0.45, life: life, maxLife: life, rot: ang,
+      box: { x: x, y: y, hw: kind === 'orb' ? 28 : 14, hh: kind === 'orb' ? 28 : 14 }
     });
-    allocP({ k: 'tracer', x: x, y: y, x2: tx, y2: ty, life: 0.08, t: 0 });
   }
 
   function updateShot(e, dt) {
     if (!e.alive) return;
     e.x += e.vx * dt; e.y += e.vy * dt;
     e.life -= dt;
-    e.box = { x: e.x, y: e.y, hw: e.kind === 'orb' ? 38 : 18, hh: e.kind === 'orb' ? 38 : 18 };
+    e.stateT = (e.stateT || 0) + dt;
+    const maxL = e.maxLife || 0.85;
+    const u = clamp(1 - e.life / maxL, 0, 1);
+    // Grow as the shot comes at the camera.
+    e.scale = (e.kind === 'orb' ? 0.7 : 0.45) * (1 + u * 2.4);
+    const hw = (e.kind === 'orb' ? 28 : 16) * (1 + u * 1.8);
+    e.box = { x: e.x, y: e.y, hw: hw, hh: hw };
     const coverY = touchWindow() ? H * 0.66 : H * 0.78;
     const coverHide = touchWindow() ? 0.4 : 0.6;
     const hitCover = (G.hiding || G.hideAmt > coverHide) && e.y > coverY;
-    const hitPlayer = !G.hiding && G.hideAmt < 0.55 && e.y > H * 0.70 && Math.abs(e.x - W / 2) < 280;
+    const nearLens = u > 0.72 && Math.hypot(e.x - W / 2, e.y - H * 0.94) < 220;
+    const hitPlayer = !G.hiding && G.hideAmt < 0.55 && (nearLens || (e.y > H * 0.86 && Math.abs(e.x - W / 2) < 340));
     if (hitCover) {
       e.alive = false; e.state = 'dead';
       materialImpact(e.x, H - 70);
@@ -1758,7 +1766,10 @@
     } else if (hitPlayer || e.life <= 0 || e.y > H + 40) {
       e.alive = false; e.state = 'dead';
       if (hitPlayer) {
-        impact(e.x, e.y, '#ff6040');
+        G.screenCrack = 1;
+        G.flash = Math.max(G.flash || 0, 0.55);
+        G.shake = Math.max(G.shake || 0, 14);
+        impact(W / 2, H * 0.62, '#ff6040');
         hurtPlayer(1);
       } else if (e.life <= 0) {
         materialImpact(e.x, e.y);
@@ -2003,6 +2014,7 @@
     }
     G.stageT += dt;
     G.shake *= Math.pow(0.04, dt);
+    if (G.screenCrack > 0) G.screenCrack = Math.max(0, G.screenCrack - dt * 1.35);
     const mot = G.stage && G.stage.motion;
     const coverDip = (window.TPMotion && TPMotion.coverDip(G)) || 0;
     if (mot) {
@@ -2056,6 +2068,7 @@
     else if (G.mode === 'credits') drawCredits(c);
     else if (G.mode === 'play' || G.mode === 'paused' || G.mode === 'continue') {
       drawWorld(c);
+      drawScreenCrack(c);
       if (!(G.bossIntro > 0)) drawHud(c);
       if (G.bossIntro > 0) drawBossSplash(c);
       if (G.mode === 'paused') drawPause(c);
@@ -2970,12 +2983,17 @@
       c.strokeStyle = 'rgba(255,208,86,0.85)'; c.lineWidth = 2;
       c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.stroke();
     } else {
-      c.fillStyle = '#fff2c0';
-      c.fillRect(-18, -3, 28, 6);
-      c.fillStyle = '#ff8020';
-      c.fillRect(6, -4, 10, 8);
+      const r = 10 * (e.scale || 1);
+      const g = c.createRadialGradient(0, 0, 1, 0, 0, r * 2.2);
+      g.addColorStop(0, '#fff');
+      g.addColorStop(0.35, '#ffe08a');
+      g.addColorStop(0.7, 'rgba(255,80,20,0.7)');
+      g.addColorStop(1, 'rgba(255,40,0,0)');
+      c.fillStyle = g;
+      c.beginPath(); c.arc(0, 0, r * 2.2, 0, Math.PI * 2); c.fill();
     }
-    e.box = { x: e.x, y: e.y, hw: e.kind === 'orb' ? 38 : 18, hh: e.kind === 'orb' ? 38 : 18 };
+    const hw = (e.box && e.box.hw) || (e.kind === 'orb' ? 38 : 18);
+    e.box = { x: e.x, y: e.y, hw: hw, hh: hw };
     c.restore();
   }
 
@@ -3971,6 +3989,31 @@
       c.font = (i === 0 ? '800 48px Anton, sans-serif' : '600 26px Oswald, sans-serif');
       c.fillText(ln, 960, y);
     });
+  }
+  function drawScreenCrack(c) {
+    const k = G.screenCrack || 0;
+    if (k <= 0.02) return;
+    c.save();
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.globalAlpha = Math.min(1, k);
+    c.fillStyle = 'rgba(180,10,10,' + (0.28 * k) + ')';
+    c.fillRect(0, 0, viewW(), viewH());
+    c.strokeStyle = 'rgba(255,255,255,' + (0.82 * k) + ')';
+    c.lineWidth = 2.5;
+    const cx = W * 0.5, cy = H * 0.46;
+    c.beginPath();
+    const rays = [
+      [cx, cy, cx - 420, cy - 260], [cx, cy, cx + 380, cy - 200],
+      [cx, cy, cx + 460, cy + 80], [cx, cy, cx - 500, cy + 40],
+      [cx, cy, cx - 160, cy + 360], [cx, cy, cx + 220, cy + 390],
+      [cx - 80, cy - 40, cx - 260, cy - 420], [cx + 60, cy + 20, cx + 340, cy + 300]
+    ];
+    rays.forEach((r) => { c.moveTo(r[0], r[1]); c.lineTo(r[2], r[3]); });
+    c.stroke();
+    c.strokeStyle = 'rgba(20,0,0,' + (0.55 * k) + ')';
+    c.lineWidth = 6;
+    c.stroke();
+    c.restore();
   }
   function drawCursor(c) {
     if (G.mode !== 'play' && G.mode !== 'paused') return;
