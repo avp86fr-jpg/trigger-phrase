@@ -435,6 +435,40 @@
     G.loFi = scale < 0.42 || (r.width < 700);
     G.portraitComic = comicPortrait;
     document.body.classList.toggle('comic-portrait', !!comicPortrait);
+    layoutHud();
+  }
+  // Pin the HUD to the letterboxed canvas so HOLD COVER / FULL / BGM
+  // sit fully on the visible stage, not in the side/top letterbox
+  // where they get clipped by the stage edge or a notch.
+  function layoutHud() {
+    const wrapEl = document.getElementById('wrap');
+    const ui = document.getElementById('ui');
+    if (!wrapEl || !ui) return;
+    const wr = wrapEl.getBoundingClientRect();
+    const cv = canvas.getBoundingClientRect();
+    const left = Math.max(0, cv.left - wr.left);
+    const top = Math.max(0, cv.top - wr.top);
+    ui.style.left = left + 'px';
+    ui.style.top = top + 'px';
+    ui.style.width = Math.max(0, cv.width) + 'px';
+    ui.style.height = Math.max(0, cv.height) + 'px';
+    ui.style.right = 'auto';
+    ui.style.bottom = 'auto';
+    ui.style.inset = 'auto';
+    // If the stage already clears a notch, don't double-apply the inset;
+    // only the leftover safe-area that still overlaps the stage.
+    const cs = window.getComputedStyle(document.documentElement);
+    const num = (v) => { const n = parseFloat(v); return isFinite(n) ? n : 0; };
+    const safeL = Math.max(0, num(cs.getPropertyValue('env(safe-area-inset-left)')) || 0);
+    const safeR = Math.max(0, num(cs.getPropertyValue('env(safe-area-inset-right)')) || 0);
+    const safeT = Math.max(0, num(cs.getPropertyValue('env(safe-area-inset-top)')) || 0);
+    const safeB = Math.max(0, num(cs.getPropertyValue('env(safe-area-inset-bottom)')) || 0);
+    // env() can't be read from getPropertyValue on html in all browsers;
+    // also set CSS variables from a probe element as fallback.
+    ui.style.setProperty('--hud-safe-l', Math.max(0, safeL - left) + 'px');
+    ui.style.setProperty('--hud-safe-r', Math.max(0, safeR - (wr.width - (left + cv.width))) + 'px');
+    ui.style.setProperty('--hud-safe-t', Math.max(0, safeT - top) + 'px');
+    ui.style.setProperty('--hud-safe-b', Math.max(0, safeB - (wr.height - (top + cv.height))) + 'px');
   }
   window.addEventListener('resize', layout);
   window.addEventListener('orientationchange', () => setTimeout(layout, 200));
