@@ -185,6 +185,7 @@
 
   function fillCatalog() {
     catalog('cover', 'assets/ui/cover.jpg');
+    catalog('cover_wide', 'assets/ui/cover_wide.jpg');
     catalog('rift', 'assets/bg/cover_rift.jpg');
     catalog('bg_woods', 'assets/bg/bg_woods.jpg');
     catalog('bg_west', 'assets/bg/bg_west.jpg');
@@ -356,6 +357,11 @@
     }));
     G.assetReady = true;
     prewarmStage(keys);
+    const st = TPStages.STAGES[index];
+    const bg = st && bgImageFor(st);
+    if (bg) extendedPlate(bg);
+    const bgB = st && typeof bgImageB === 'function' && bgImageB(st);
+    if (bgB) extendedPlate(bgB);
   }
 
   function prefetchStage(index) {
@@ -370,7 +376,7 @@
     await Promise.all(TPStages.STAGES.map((st) => ensureKey('t_' + st.boss.id)));
   }
 
-  const CORE_KEYS = ['cover','rift','chaos','vera_mic','vera_point','vera_cross','bg_chaos_study'];
+  const CORE_KEYS = ['cover','cover_wide','rift','chaos','vera_mic','vera_point','vera_cross','bg_chaos_study'];
   const OPTIONAL_IDLE2 = {'enemy_woods_idle2':true,'enemy_west_idle2':true,'enemy_mobster_idle2':true,'enemy_suit_idle2':true,'enemy_egypt_idle2':true,'enemy_future_idle2':true,'enemy_industrial_idle2':true,'enemy_medieval_idle2':true,'enemy_modern_idle2':true,'enemy_prehistoric_idle2':true,'enemy_rome_idle2':true,'enemy_sparta_idle2':true,'enemy_temple_idle2':true,'enemy_yacht_guard_idle2':true};
   window.OPTIONAL_IDLE2 = OPTIONAL_IDLE2;
 
@@ -451,23 +457,100 @@
     const my = ((G.playY || 0) / s) + 60;
     return { x: -mx, y: -my, w: designW() + mx * 2, h: designH() + my * 2 };
   }
-  function drawImageCover(c, img, x, y, w, h) {
-    if (!img) return;
+  // Build a ~32:9 plate at the same pixel scale as `img`, filling the sides
+  // with smoothed edge light (no second, differently cropped copy of the scene).
+  function extendedPlate(img) {
+    if (!img || !img.width || !img.height) return img;
+    if (img._ext) return img._ext;
     const iw = img.width, ih = img.height;
-    if (!iw || !ih) return;
-    const sc = Math.max(w / iw, h / ih);
-    const dw = iw * sc, dh = ih * sc;
-    c.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+    const tw = Math.max(iw + 16, Math.round(ih * 3.6));
+    const dx = Math.floor((tw - iw) / 2);
+    const rw = tw - dx - iw;
+    const src = document.createElement('canvas');
+    src.width = iw; src.height = ih;
+    const sg = src.getContext('2d', { alpha: false });
+    sg.drawImage(img, 0, 0, iw, ih);
+    let data;
+    try { data = sg.getImageData(0, 0, iw, ih).data; }
+    catch (err) { return img; }
+    const ew = Math.min(48, iw);
+    const avgL = new Float32Array(ih * 3), avgR = new Float32Array(ih * 3);
+    for (let y = 0; y < ih; y++) {
+      let r = 0, g = 0, b = 0, r2 = 0, g2 = 0, b2 = 0;
+      for (let x = 0; x < ew; x++) {
+        const i = (y * iw + x) * 4;
+        r += data[i]; g += data[i + 1]; b += data[i + 2];
+      }
+      for (let x = iw - ew; x < iw; x++) {
+        const i = (y * iw + x) * 4;
+        r2 += data[i]; g2 += data[i + 1]; b2 += data[i + 2];
+      }
+      avgL[y * 3] = r / ew; avgL[y * 3 + 1] = g / ew; avgL[y * 3 + 2] = b / ew;
+      avgR[y * 3] = r2 / ew; avgR[y * 3 + 1] = g2 / ew; avgR[y * 3 + 2] = b2 / ew;
+    }
+    const rad = 36;
+    function smooth(arr) {
+      const o = new Float32Array(arr.length);
+      for (let y = 0; y < ih; y++) {
+        let r = 0, g = 0, b = 0, w = 0;
+        const y0 = Math.max(0, y - rad), y1 = Math.min(ih - 1, y + rad);
+        for (let yy = y0; yy <= y1; yy++) {
+          r += arr[yy * 3]; g += arr[yy * 3 + 1]; b += arr[yy * 3 + 2]; w++;
+        }
+        o[y * 3] = r / w; o[y * 3 + 1] = g / w; o[y * 3 + 2] = b / w;
+      }
+      return o;
+    }
+    const sL = smooth(avgL), sR = smooth(avgR);
+    function fillSide(width, cols, joinOnRight) {
+      const cv = document.createElement('canvas');
+      cv.width = Math.max(1, width); cv.height = ih;
+      const cg = cv.getContext('2d', { alpha: false });
+      const im = cg.createImageData(cv.width, ih);
+      const p = im.data, Wd = cv.width;
+      for (let y = 0; y < ih; y++) {
+        const r = cols[y * 3], g = cols[y * 3 + 1], b = cols[y * 3 + 2];
+        for (let x = 0; x < Wd; x++) {
+          const far = joinOnRight ? (Wd - 1 - x) / Math.max(1, Wd - 1) : x / Math.max(1, Wd - 1);
+          const dim = 1 - 0.16 * far;
+          const i = (y * Wd + x) * 4;
+          p[i] = r * dim; p[i + 1] = g * dim; p[i + 2] = b * dim; p[i + 3] = 255;
+        }
+      }
+      cg.putImageData(im, 0, 0);
+      return cv;
+    }
+    const cv = document.createElement('canvas');
+    cv.width = tw; cv.height = ih;
+    const g = cv.getContext('2d', { alpha: false });
+    g.drawImage(fillSide(dx, sL, true), 0, 0);
+    g.drawImage(fillSide(rw, sR, false), dx + iw, 0);
+    g.save();
+    g.filter = 'blur(28px)';
+    g.globalAlpha = 0.38;
+    const deep = Math.min(400, iw);
+    g.drawImage(img, 0, 0, deep, ih, 0, 0, dx, ih);
+    g.drawImage(img, iw - deep, 0, deep, ih, dx + iw, 0, rw, ih);
+    g.restore();
+    g.filter = 'none';
+    g.globalAlpha = 1;
+    g.drawImage(img, dx, 0, iw, ih);
+    cv._srcW = iw;
+    cv._padX = dx;
+    img._ext = cv;
+    return cv;
   }
-  function drawBleedCover(c, img, kenBurns) {
-    c.setTransform(1, 0, 0, 1, 0, 0);
-    const cw = viewW(), ch = viewH();
-    c.fillStyle = '#000';
-    c.fillRect(0, 0, cw, ch);
-    if (!img) return;
-    const z = kenBurns ? (1.04 + Math.sin((G.titleT || 0) * 0.35) * 0.02) : 1.04;
-    const s = Math.max(cw / img.width, ch / img.height) * z;
-    c.drawImage(img, (cw - img.width * s) / 2, (ch - img.height * s) / 2, img.width * s, img.height * s);
+  // Draw `img` so its native bitmap maps to (x,y,w,h). Sides of the canvas
+  // are filled by the same-scale extended plate — never a second zoomed copy.
+  function drawPlateFill(c, img, x, y, w, h) {
+    if (!img || !w || !h) return;
+    const ext = extendedPlate(img);
+    if (ext && ext._srcW) {
+      const sc = w / ext._srcW;
+      c.drawImage(ext, x - ext._padX * sc, y, ext.width * sc, h);
+      return;
+    }
+    c.drawImage(img, x, y, w, h);
   }
   function cssViewport() {
     const vv = window.visualViewport;
@@ -485,10 +568,12 @@
     const wrap = document.getElementById('wrap');
     const vp = cssViewport();
     const rw = Math.max(2, vp.w), rh = Math.max(2, vp.h);
-    // Portrait comics: tall 9:16 playfield so a panel fills the phone.
-    const comicPortrait = (G.mode === 'comic') && rh > rw * 1.15;
+    // Portrait comics: a tall page that matches the viewport aspect so the
+    // strip fills the phone (no postage-stamp 16:9 box, no leftover letterbox).
+    const portraitView = rh > rw * 1.15;
+    const comicPortrait = (G.mode === 'comic') && portraitView;
     const dw = comicPortrait ? 1080 : W;
-    const dh = comicPortrait ? 1920 : H;
+    const dh = comicPortrait ? Math.max(1080, Math.round(1080 * (rh / rw))) : H;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     let bw = Math.max(2, Math.round(rw * dpr));
     let bh = Math.max(2, Math.round(rh * dpr));
@@ -523,7 +608,9 @@
     G.css = canvas.getBoundingClientRect();
     G.loFi = G.scale < 0.42 || rw < 700;
     G.portraitComic = comicPortrait;
+    G.portraitView = portraitView;
     document.body.classList.toggle('comic-portrait', !!comicPortrait);
+    document.body.classList.toggle('portrait-hold', !!(portraitView && G.mode !== 'comic'));
     layoutHud();
   }
   // Pin the HUD to the 16:9 (or 9:16 comic) safe playfield so HOLD COVER / FULL / BGM
@@ -535,10 +622,11 @@
     const wr = wrapEl.getBoundingClientRect();
     const cv = canvas.getBoundingClientRect();
     const s = cv.width / Math.max(1, viewW());
-    const left = (cv.left - wr.left) + (G.playX || 0) * s;
-    const top = (cv.top - wr.top) + (G.playY || 0) * s;
-    const pw = (G.playW || viewW()) * s;
-    const ph = (G.playH || viewH()) * s;
+    const full = !!(G.portraitView && G.mode !== 'comic') || (G.mode === 'comic' && G.portraitComic);
+    const left = full ? (cv.left - wr.left) : ((cv.left - wr.left) + (G.playX || 0) * s);
+    const top = full ? (cv.top - wr.top) : ((cv.top - wr.top) + (G.playY || 0) * s);
+    const pw = full ? cv.width : ((G.playW || viewW()) * s);
+    const ph = full ? cv.height : ((G.playH || viewH()) * s);
     setStyleIf(ui, 'left', left + 'px');
     setStyleIf(ui, 'top', top + 'px');
     setStyleIf(ui, 'width', Math.max(0, pw) + 'px');
@@ -745,13 +833,17 @@
   function hideFsHint() {
     if ($fsHint) $fsHint.hidden = true;
   }
+  let _fsPromptTimer = 0;
   function showFsPrompt() {
     if (!$fsPrompt) return;
     if (isTrueFullscreen()) { $fsPrompt.hidden = true; return; }
     if (!(isMobilePlay() || isAppleTouch())) { $fsPrompt.hidden = true; return; }
     $fsPrompt.hidden = false;
+    if (_fsPromptTimer) clearTimeout(_fsPromptTimer);
+    _fsPromptTimer = setTimeout(hideFsPrompt, 3000);
   }
   function hideFsPrompt() {
+    if (_fsPromptTimer) { clearTimeout(_fsPromptTimer); _fsPromptTimer = 0; }
     if ($fsPrompt) $fsPrompt.hidden = true;
   }
   function afterFsAttempt() {
@@ -840,6 +932,7 @@
   });
   window.addEventListener('pointerdown', (e) => {
     TPAudio.unlock();
+    if ($fsPrompt && !$fsPrompt.hidden && e.target !== $fsPrompt && !($fsPrompt.contains && $fsPrompt.contains(e.target))) hideFsPrompt();
     if (isCoverTarget(e.target)) { setHiding(true); return; }
     if (isUiTarget(e.target)) return;
     const p = toWorld(e.clientX, e.clientY);
@@ -2263,10 +2356,17 @@
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.fillStyle = '#000';
     c.fillRect(0, 0, viewW(), viewH());
-    if (G.mode === 'title') drawBleedCover(c, IM.cover, true);
-    else if (G.mode === 'stagecard') drawBleedCover(c, G.stage ? bgImageFor(G.stage) : null, false);
-    else if (G.mode === 'play' || G.mode === 'paused' || G.mode === 'continue') {
-      drawBleedCover(c, G.stage ? bgImageFor(G.stage) : null, false);
+    // Portrait phone: don't show a postage-stamp 16:9 stage. Comic fills the
+    // viewport; every other mode gets a full-canvas rotate prompt.
+    if (G.portraitView && G.mode !== 'comic') {
+      drawPortraitRotate(c);
+      if (G.wipe && window.TPMotion) TPMotion.drawWipe(c, G, viewW(), viewH());
+      else if (G.transT > 0) {
+        const a = G.transT / 0.32;
+        c.fillStyle = 'rgba(0,0,0,' + (a * 0.85) + ')';
+        c.fillRect(0, 0, viewW(), viewH());
+      }
+      return;
     }
     c.save();
     applyPlayfield(c);
@@ -2390,19 +2490,17 @@
     } else if (img) {
       const px = -(G.cam.x || 0) * 70;
       const py = -(G.cam.y || 0) * 28;
-      const br = bleedRect();
-      // Cover-fit the plate into the overscanned bleed (fills side/top gaps).
-      drawImageCover(c, img, br.x + px, br.y + py, br.w, br.h);
+      // Same-scale overscan of the stage plate; sides continue the edge light.
+      drawPlateFill(c, img, -80 + px, -60 + py, W + 160, H + 120);
       if (imgB && (G.plateBlend || 0) > 0.01) {
         c.save();
         c.globalAlpha = G.plateBlend;
-        drawImageCover(c, imgB, br.x + px, br.y + py, br.w, br.h);
+        drawPlateFill(c, imgB, -80 + px, -60 + py, W + 160, H + 120);
         c.restore();
       }
       G._holdBg = null;
     } else if (G._holdBg) {
-      const br = bleedRect();
-      drawImageCover(c, G._holdBg, br.x, br.y, br.w, br.h);
+      drawPlateFill(c, G._holdBg, -80, -60, W + 160, H + 120);
     } else {
       drawProcBg(c, st);
     }
@@ -3782,11 +3880,16 @@
   }
 
   function drawTitle(c) {
-    // Bleed already painted a cover-fit of the key art; also draw a sharp unzoomed
-    // 16:9 copy in the safe playfield so the baked-in logo is never cropped.
-    if (IM.cover) c.drawImage(IM.cover, 0, 0, W, H);
+    const art = IM.cover_wide || IM.cover;
+    if (art) {
+      const dw = (art.width / art.height) * H;
+      c.drawImage(art, (W - dw) / 2, 0, dw, H);
+      const br0 = bleedRect();
+      if ((W - dw) / 2 > br0.x + 1) drawPlateFill(c, art, (W - dw) / 2, 0, dw, H);
+    }
+    const br = bleedRect();
     c.fillStyle = 'rgba(0,0,0,' + (0.08 + Math.sin(G.titleT * 1.2) * 0.03) + ')';
-    c.fillRect(0, 0, W, H);
+    c.fillRect(br.x, br.y, br.w, br.h);
     // light sweep
     const sweep = ((G.titleT * 0.35) % 2);
     if (sweep < 1) {
@@ -4041,6 +4144,67 @@
   }
 
   function finishIntroDraw() {}
+  function drawPortraitRotate(c) {
+    const cw = viewW(), ch = viewH();
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.fillStyle = '#07040c';
+    c.fillRect(0, 0, cw, ch);
+    const art = IM.cover_wide || IM.cover || IM.rift;
+    if (art && art.width) {
+      const s = Math.max(cw / art.width, ch / art.height);
+      c.globalAlpha = 0.32;
+      c.drawImage(art, (cw - art.width * s) / 2, (ch - art.height * s) / 2, art.width * s, art.height * s);
+      c.globalAlpha = 1;
+    }
+    c.fillStyle = 'rgba(0,0,0,0.42)';
+    c.fillRect(0, 0, cw, ch);
+    const k = cw / 390;
+    const cx = cw / 2, cy = ch * 0.36;
+    // phone icon (portrait handset) with a rotate arrow
+    c.save();
+    c.translate(cx, cy);
+    c.strokeStyle = '#ffe7b0';
+    c.fillStyle = 'rgba(255,231,176,0.08)';
+    c.lineWidth = Math.max(3, 4 * k);
+    const pw = 54 * k, ph = 92 * k, r = 10 * k;
+    c.beginPath();
+    c.moveTo(-pw / 2 + r, -ph / 2);
+    c.arcTo(pw / 2, -ph / 2, pw / 2, ph / 2, r);
+    c.arcTo(pw / 2, ph / 2, -pw / 2, ph / 2, r);
+    c.arcTo(-pw / 2, ph / 2, -pw / 2, -ph / 2, r);
+    c.arcTo(-pw / 2, -ph / 2, pw / 2, -ph / 2, r);
+    c.closePath();
+    c.fill(); c.stroke();
+    c.beginPath();
+    c.arc(0, ph / 2 - 12 * k, 3.5 * k, 0, Math.PI * 2);
+    c.fillStyle = '#ffe7b0';
+    c.fill();
+    // curved rotate arrow
+    c.strokeStyle = '#ffd056';
+    c.lineWidth = Math.max(3, 5 * k);
+    c.beginPath();
+    c.arc(0, 0, 78 * k, -0.9, 2.0);
+    c.stroke();
+    const ax = Math.cos(2.0) * 78 * k, ay = Math.sin(2.0) * 78 * k;
+    c.beginPath();
+    c.moveTo(ax, ay);
+    c.lineTo(ax - 16 * k, ay - 8 * k);
+    c.moveTo(ax, ay);
+    c.lineTo(ax - 4 * k, ay - 18 * k);
+    c.stroke();
+    c.restore();
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillStyle = '#ffe7b0';
+    c.font = '800 ' + Math.round(32 * k) + 'px Anton, sans-serif';
+    c.fillText('ROTATE YOUR PHONE', cx, ch * 0.58);
+    c.fillStyle = 'rgba(255,231,176,0.82)';
+    c.font = '600 ' + Math.round(15 * k) + 'px Oswald, sans-serif';
+    c.fillText('The stage is landscape.', cx, ch * 0.64);
+    c.fillStyle = 'rgba(255,231,176,0.55)';
+    c.font = '600 ' + Math.round(13 * k) + 'px Oswald, sans-serif';
+    c.fillText('Turn the device on its side to play.', cx, ch * 0.69);
+  }
   function drawIntro(c) {
     const t = G.modeT;
     c.fillStyle = '#04040a'; c.fillRect(0, 0, W, H);
@@ -4117,8 +4281,13 @@
     const st = G.stage; if (!st) return;
     const t = G.modeT;
     const img = bgImageFor(st);
-    if (img) { c.drawImage(img, 0, 0, W, H); c.fillStyle = 'rgba(0,0,0,0.62)'; c.fillRect(0, 0, W, H); }
-    else { c.fillStyle = '#08080c'; c.fillRect(0, 0, W, H); }
+    if (img) drawPlateFill(c, img, 0, 0, W, H);
+    // One uniform dim over the whole canvas so side extensions match the stage.
+    c.save();
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.fillStyle = img ? 'rgba(0,0,0,0.62)' : '#08080c';
+    c.fillRect(0, 0, viewW(), viewH());
+    c.restore();
     const slide = Math.min(1, t / 0.35);
     c.save();
     c.translate((1 - slide) * -200, 0);

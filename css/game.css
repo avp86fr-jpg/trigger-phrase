@@ -106,12 +106,17 @@ html, body {
 }
 #btnFs .fs-ico { display: block; flex: 0 0 22px; }
 #btnFs .fs-lab { display: inline; white-space: nowrap; }
+body.mode-title #rightBtns {
+  right: auto;
+  left: max(14px, env(safe-area-inset-left, 0px), var(--hud-safe-l, 0px));
+  align-items: flex-start;
+}
 body.mode-title #btnFs {
-  min-width: 220px;
-  height: 72px;
-  font-size: 22px;
+  min-width: 200px;
+  height: 56px;
+  font-size: 18px;
   letter-spacing: 0.1em;
-  padding: 0 18px;
+  padding: 0 16px;
 }
 /* In-game and true fullscreen: icon only (no EXIT label). */
 body:not(.mode-title) #btnFs .fs-lab,
@@ -127,23 +132,30 @@ body.fs-true #btnFs {
   pointer-events: auto;
   position: absolute;
   left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  top: max(12px, env(safe-area-inset-top, 0px), var(--hud-safe-t, 0px));
+  transform: translateX(-50%);
   z-index: 10;
-  min-width: min(420px, 86%);
-  height: 72px;
-  padding: 0 28px;
-  border: 2px solid rgba(255, 220, 140, 0.95);
-  border-radius: 14px;
-  background: rgba(8, 6, 14, 0.94);
+  width: auto;
+  min-width: 0;
+  height: 34px;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 220, 140, 0.85);
+  border-radius: 999px;
+  background: rgba(8, 6, 14, 0.88);
   color: #ffe7b0;
   font-family: Anton, sans-serif;
-  font-size: 26px;
+  font-size: 13px;
   letter-spacing: 0.08em;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.45);
   cursor: pointer;
+  white-space: nowrap;
 }
 #fsPrompt[hidden] { display: none !important; }
+body[data-mode="play"] #fsPrompt, body[data-mode="paused"] #fsPrompt {
+  left: max(16px, env(safe-area-inset-left, 0px), var(--hud-safe-l, 0px));
+  transform: none;
+  top: max(56px, env(safe-area-inset-top, 0px), var(--hud-safe-t, 0px));
+}
 
 #fsHint {
   pointer-events: auto;
@@ -275,8 +287,10 @@ html.pseudo-fs, html.pseudo-fs body, html.pseudo-fs #wrap {
   z-index: 3;
 }
 @media (orientation: portrait) and (max-aspect-ratio: 3/4) {
-  #tiltHint { display: block; }
+  #tiltHint { display: none; }
 }
+body.portrait-hold #tiltHint,
+body.comic-portrait #tiltHint,
 body.fs-on #tiltHint, html.pseudo-fs #tiltHint { display: none !important; }
 
 #btnCover.lefty {

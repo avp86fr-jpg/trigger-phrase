@@ -33,11 +33,15 @@
   }
 
   function viewScale() {
+    const G = window.__LG && window.__LG.G;
+    // CSS pixels per design pixel — never use the canvas backing store
+    // (which now matches the full visualViewport, not 1920 or 1080).
+    if (G && G.scale) return G.scale;
     const el = document.getElementById('game');
-    const cw = (el && el.width) || 1920;
-    if (window.__LG && window.__LG.G && window.__LG.G.scale) return window.__LG.G.scale;
-    const w = el ? el.getBoundingClientRect().width : cw;
-    return Math.max(0.2, w / cw);
+    const dw = (G && G.designW) || 1920;
+    const w = el ? el.getBoundingClientRect().width : dw;
+    const play = (G && G.playW && G.designW) ? (G.playW / (window.devicePixelRatio || 1)) / G.designW : (w / dw);
+    return Math.max(0.2, play);
   }
   function portraitStack() {
     return !!(window.__LG && window.__LG.G && window.__LG.G.portraitComic);
@@ -432,7 +436,9 @@
   }
 
   function pageBox(W, H) {
-    return { x: MARGIN, y: TOP, w: W - MARGIN * 2, h: H - TOP - BOTTOM };
+    const top = portraitStack() ? 36 : TOP;
+    const bottom = portraitStack() ? 100 : BOTTOM;
+    return { x: MARGIN, y: top, w: W - MARGIN * 2, h: H - top - bottom };
   }
 
   function panelRect(page, panel) {
@@ -474,7 +480,7 @@
     const more = revealed < panels.length;
     const hint = more ? (focus ? 'TAP FOR NEXT PANEL' : 'CLICK / TAP TO REVEAL THE NEXT PANEL') : (focus ? 'TAP TO CONTINUE' : 'CLICK / TAP TO CONTINUE');
     const label = focus ? (revealed + ' / ' + panels.length + '  ·  ' + hint) : hint;
-    c.fillText(label, W / 2, H - 28);
+    c.fillText(label, W / 2, H - (portraitStack() ? 44 : 28));
   }
 
   function round(c, x, y, w, h, r) { roundPath(c, x, y, w, h, r); c.fill(); }
