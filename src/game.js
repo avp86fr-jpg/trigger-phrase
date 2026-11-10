@@ -2754,7 +2754,66 @@
     c.fill();
     c.restore();
   }
+  // Plant feet on e.y and size every pose by its opaque body, so padded
+  // walk sheets (glacier, web, foundry, etc.) do not shrink versus tight aim art.
+  const opaqueFitCache = typeof WeakMap === 'function' ? new WeakMap() : null;
+  const opaqueFitMemo = {};
+  function opaqueBox(img) {
+    if (!img) return null;
+    if (opaqueFitCache && opaqueFitCache.has(img)) return opaqueFitCache.get(img);
+    const key = img.src || img._src || null;
+    if (key && opaqueFitMemo[key]) return opaqueFitMemo[key];
+    const w = img.width, h = img.height;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, 0, 0);
+    const data = g.getImageData(0, 0, w, h).data;
+    let minX = w, minY = h, maxX = 0, maxY = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (data[(y * w + x) * 4 + 3] > 16) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < minX) { minX = 0; minY = 0; maxX = w - 1; maxY = h - 1; }
+    const box = { minX: minX, minY: minY, maxX: maxX, maxY: maxY, bw: maxX - minX + 1, bh: maxY - minY + 1, w: w, h: h };
+    if (opaqueFitCache) opaqueFitCache.set(img, box);
+    if (key) opaqueFitMemo[key] = box;
+    return box;
+  }
+  function spriteFit(img, bodyH, lying) {
+    const box = opaqueBox(img);
+    if (!box) return null;
+    if (lying) {
+      const s = 560 / Math.max(1, box.bw);
+      const cy = (box.minY + box.maxY + 1) / 2;
+      return {
+        dx: -box.maxX * s,
+        dy: -cy * s,
+        dw: box.w * s,
+        dh: box.h * s,
+        bodyW: 560,
+        bodyH: box.bh * s
+      };
+    }
+    const s = bodyH / Math.max(1, box.bh);
+    const cx = (box.minX + box.maxX + 1) / 2;
+    return {
+      dx: -cx * s,
+      dy: -(box.maxY + 1) * s,
+      dw: box.w * s,
+      dh: box.h * s,
+      bodyW: box.bw * s,
+      bodyH: bodyH
+    };
+  }
   function drawEntity(c, e) {
+
     const enter = e.state === 'enter' ? clamp(e.stateT / (e.enterDur || 0.32), 0, 1) : 1;
     const leave = e.state === 'leave' ? clamp(1 - e.stateT / 0.5, 0, 1) : 1;
     const deathHold = e.paintedDeath ? 1.05 : 0.7, deathFade = 0.28;
@@ -2788,42 +2847,44 @@
     else {
       const img = spriteFor(e);
       if (img) {
-        const h = 500, w = h * (img.width / img.height);
         const poseLie = poseFor(e);
         const lying = e.state === 'dead' && poseLie && poseLie.key === 'death2';
-        let dw = w, dh = h;
-        if (lying) { dw = 560; dh = dw * (img.height / img.width); }
-        drawContactShadow(c, (lying ? dw : w) * (lying ? 0.48 : 0.42), appear);
+        const fit0 = spriteFit(img, 500, lying);
+        const bodyW = fit0 ? fit0.bodyW : 220;
+        const bodyH = fit0 ? fit0.bodyH : 500;
+        drawContactShadow(c, bodyW * (lying ? 0.48 : 0.42), appear);
         const pose = poseFor(e);
         const blend = tickPoseBlend(e, pose);
         const drawOne = (src, alphaMul) => {
           if (!src) return;
           const poseMeta = poseFor(e);
           const srcT = tinted(src, e.varTint, e.dress, !!(poseMeta && poseMeta.dressSheet));
+          const fit = spriteFit(srcT, 500, lying) || fit0;
+          if (!fit) return;
           const rim = outlined(srcT, rimColorFor(e.state));
           const draw = rim || srcT;
-          const pad = rim ? 3 * (dh / srcT.height) : 0;
-          const iw = lying ? dw : (dh * (srcT.width / srcT.height));
+          const pad = rim ? 3 * (fit.bodyH / srcT.height) : 0;
+          const dx = fit.dx - pad, dy = fit.dy - pad, dw = fit.dw + pad * 2, dh = fit.dh + pad * 2;
           c.save();
           c.globalAlpha = appear * alphaMul;
           const canWarp = window.TPMotion && !lying && e.state !== 'dead' && e.state !== 'enter' && !G.loFi && e.type !== 'boss';
-          if (e.state === 'tel') drawSoftTelRim(c, draw, -iw / 2 - pad, -dh - pad, iw + pad * 2, dh + pad * 2, e.stateT);
+          if (e.state === 'tel') drawSoftTelRim(c, draw, dx, dy, dw, dh, e.stateT);
           if (canWarp) {
             const def = TPMotion.deformFor(e, G);
             def.loFi = false;
-            TPMotion.drawWarped(c, draw, -iw / 2 - pad, -dh - pad, iw + pad * 2, dh + pad * 2, def);
+            TPMotion.drawWarped(c, draw, dx, dy, dw, dh, def);
           } else {
-            c.drawImage(draw, -iw / 2 - pad, -dh - pad, iw + pad * 2, dh + pad * 2);
+            c.drawImage(draw, dx, dy, dw, dh);
           }
-          if (e.flash > 0) flashSprite(c, draw, -iw / 2 - pad, -dh - pad, iw + pad * 2, dh + pad * 2, e.flash * alphaMul);
+          if (e.flash > 0) flashSprite(c, draw, dx, dy, dw, dh, e.flash * alphaMul);
           c.restore();
         };
         if (e.prevImg && blend < 1 && e.prevImg !== img) drawOne(e.prevImg, 1 - blend);
         drawOne(img, (e.prevImg && blend < 1 && e.prevImg !== img) ? blend : 1);
         c.filter = 'none';
-        gradeToPlate(c, (lying ? dw : w) * 0.42, appear, dh);
-        const visH = dh * e.scale * pop;
-        e.box = { x: e.x, y: e.y + yOff - visH * (lying ? 0.35 : 0.50), hw: (lying ? dw : w) * e.scale * pop * (lying ? 0.42 : 0.28), hh: visH * (lying ? 0.36 : 0.42) };
+        gradeToPlate(c, bodyW * 0.42, appear, bodyH);
+        const visH = bodyH * e.scale * pop;
+        e.box = { x: e.x, y: e.y + yOff - visH * (lying ? 0.35 : 0.50), hw: bodyW * e.scale * pop * (lying ? 0.42 : 0.28), hh: visH * (lying ? 0.36 : 0.42) };
       } else {
         c.fillStyle = '#c00'; c.fillRect(-40, -160, 80, 160);
         e.box = { x: e.x, y: e.y - 80, hw: 40, hh: 80 };
@@ -2919,29 +2980,33 @@
     if (img && img !== IM['p_' + e.kind]) {
       const pose = poseFor(e);
       const blend = tickPoseBlend(e, pose);
-      const w = h * (img.width / img.height);
+      const fit0 = spriteFit(img, h, false);
+      const bodyW = fit0 ? fit0.bodyW : (h * (img.width / img.height));
       const paint = (src, a) => {
         if (!src) return;
+        const fit = spriteFit(src, h, false) || fit0;
+        if (!fit) return;
         const rim = outlined(src, rimColorFor(e.state));
         const draw = rim || src;
         const pad = rim ? 3 * (h / src.height) : 0;
+        const dx = fit.dx - pad, dy = fit.dy - pad, dw = fit.dw + pad * 2, dh = fit.dh + pad * 2;
         c.save();
         c.globalAlpha = a;
-        if (e.state === 'tel') drawSoftTelRim(c, draw, -w / 2 - pad, -h - pad, w + pad * 2, h + pad * 2, e.stateT);
+        if (e.state === 'tel') drawSoftTelRim(c, draw, dx, dy, dw, dh, e.stateT);
         if (window.TPMotion && !G.loFi && e.type !== 'boss' && e.state !== 'enter' && e.state !== 'dead') {
           const def = TPMotion.deformFor(e, G);
-          TPMotion.drawWarped(c, draw, -w / 2 - pad, -h - pad, w + pad * 2, h + pad * 2, def);
+          TPMotion.drawWarped(c, draw, dx, dy, dw, dh, def);
         } else {
-          c.drawImage(draw, -w / 2 - pad, -h - pad, w + pad * 2, h + pad * 2);
+          c.drawImage(draw, dx, dy, dw, dh);
         }
-        if (e.flash > 0) flashSprite(c, draw, -w / 2 - pad, -h - pad, w + pad * 2, h + pad * 2, e.flash);
+        if (e.flash > 0) flashSprite(c, draw, dx, dy, dw, dh, e.flash);
         c.restore();
       };
       if (e.prevImg && blend < 1 && e.prevImg !== img) paint(e.prevImg, 1 - blend);
       paint(img, (e.prevImg && blend < 1 && e.prevImg !== img) ? blend : 1);
-      gradeToPlate(c, w * 0.38, 1, h);
+      gradeToPlate(c, bodyW * 0.38, 1, h);
       const visH = h * e.scale;
-      e.box = { x: e.x, y: e.y - visH * 0.50, hw: w * e.scale * 0.28, hh: visH * 0.42 };
+      e.box = { x: e.x, y: e.y - visH * 0.50, hw: bodyW * e.scale * 0.28, hh: visH * 0.42 };
     } else if (img) {
       const w = 520, hh = 520;
       c.fillStyle = '#0c0a08';
