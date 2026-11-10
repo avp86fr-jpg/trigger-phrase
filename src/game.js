@@ -435,6 +435,12 @@
   }
   window.addEventListener('resize', layout);
   window.addEventListener('orientationchange', () => setTimeout(layout, 200));
+  if (window.visualViewport) {
+    visualViewport.addEventListener('resize', layout);
+    visualViewport.addEventListener('scroll', layout);
+  }
+  document.addEventListener('fullscreenchange', layout);
+  document.addEventListener('webkitfullscreenchange', layout);
 
   function applySettingsChrome() {
     const s = G.save || defaultSave();
@@ -498,13 +504,39 @@
   }
   applySettingsChrome();
 
-  function toWorld(clientX, clientY) {
-    const r = G.css || canvas.getBoundingClientRect();
-    const vw = viewW(), vh = viewH();
+  // World is drawn with camera zoom/pan (worldTransform). Hits and the
+  // reticle must use the inverse of that transform, or a tap on a zoomed
+  // grunt (stage 1 is zoom 1.08–1.16) lands beside the hitbox.
+  function viewXform() {
+    const z = Math.max(0.001, (G.cam && G.cam.z) || 1);
+    const cx = ((G.cam && G.cam.x) || 0) * W;
+    const cy = ((G.cam && G.cam.y) || 0) * H + (G.hideAmt || 0) * 70;
+    return { z: z, cx: cx, cy: cy };
+  }
+  function canvasToWorld(sx, sy) {
+    if (G.mode !== 'play' && G.mode !== 'paused' && G.mode !== 'continue') return { x: sx, y: sy };
+    const v = viewXform();
     return {
-      x: clamp((clientX - r.left) / r.width * vw, 0, vw),
-      y: clamp((clientY - r.top) / r.height * vh, 0, vh),
+      x: (sx - W / 2) / v.z + W / 2 + v.cx,
+      y: (sy - H / 2) / v.z + H / 2 + v.cy
     };
+  }
+  function worldToCanvas(wx, wy) {
+    if (G.mode !== 'play' && G.mode !== 'paused' && G.mode !== 'continue') return { x: wx, y: wy };
+    const v = viewXform();
+    return {
+      x: v.z * (wx - W / 2 - v.cx) + W / 2,
+      y: v.z * (wy - H / 2 - v.cy) + H / 2
+    };
+  }
+  function toWorld(clientX, clientY) {
+    const r = canvas.getBoundingClientRect();
+    G.css = r;
+    const vw = viewW(), vh = viewH();
+    const sx = clamp((clientX - r.left) / Math.max(1e-6, r.width) * vw, 0, vw);
+    const sy = (clientY - r.top) / Math.max(1e-6, r.height) * vh;
+    const syC = clamp(sy, 0, vh);
+    return canvasToWorld(sx, syC);
   }
 
   function isCoverTarget(el) {
@@ -3855,7 +3887,8 @@
   function drawCursor(c) {
     if (G.mode !== 'play' && G.mode !== 'paused') return;
     if (!G.pointer.on && G.mode === 'title') return;
-    const x = G.pointer.x, y = G.pointer.y;
+    const aim = (G.mode === 'play' || G.mode === 'paused' || G.mode === 'continue') ? worldToCanvas(G.pointer.x, G.pointer.y) : { x: G.pointer.x, y: G.pointer.y };
+    const x = aim.x, y = aim.y;
     const hidden = G.hideAmt > 0.55 && G.mode === 'play';
     c.save();
     c.translate(x, y);
@@ -4019,6 +4052,7 @@
     shoot, setHiding, startStory, skipIntro, skipStageCard, finishIntro, enterPlay,
     applySettingsChrome, diffCfg, ensureBox, stepSim, skipPresentation,
     spawnEntity, setWeapon, tryRhythmReload, startBoss, ensureStageAssets, prefetchStage,
+    viewXform, canvasToWorld, worldToCanvas, toWorld,
     get mode() { return G.mode; },
     get player() { return G.player; },
     get entities() { return G.entities; },
