@@ -523,7 +523,9 @@
   }
   function depthFromY(y) {
     const tt = clamp((y / H - 0.62) / 0.28, 0, 1);
-    return lerp(0.72, 1.06, tt);
+    // Mid-ground grunts were reading taller than the cabin/doors;
+    // keep a clear near/far range but sit them lower in the plate.
+    return lerp(0.58, 0.88, tt);
   }
   // Authored spawn Y is mid-frame; most plates have the ground plane lower.
   function plantNorm(yNorm, type) {
@@ -2883,7 +2885,7 @@
       if (img) {
         const poseLie = poseFor(e);
         const lying = e.state === 'dead' && poseLie && poseLie.key === 'death2';
-        const fit0 = spriteFit(img, 500, lying);
+        const fit0 = spriteFit(img, 390, lying);
         const bodyW = fit0 ? fit0.bodyW : 220;
         const bodyH = fit0 ? fit0.bodyH : 500;
         drawContactShadow(c, bodyW * (lying ? 0.48 : 0.42), appear);
@@ -2893,7 +2895,7 @@
           if (!src) return;
           const poseMeta = poseFor(e);
           const srcT = tinted(src, e.varTint, e.dress, !!(poseMeta && poseMeta.dressSheet));
-          const fit = spriteFit(srcT, 500, lying) || fit0;
+          const fit = spriteFit(srcT, 390, lying) || fit0;
           if (!fit) return;
           const rim = outlined(srcT, rimColorFor(e.state));
           const draw = rim || srcT;
@@ -3002,8 +3004,8 @@
 
   function drawBoss(c, e) {
     const img = spriteFor(e) || IM['p_' + e.kind];
-    const h = 600;
-    drawContactShadow(c, 230, 1);
+    const h = 500;
+    drawContactShadow(c, 200, 1);
     if (e.state === 'tel') {
       const glow = c.createRadialGradient(0, 0, 16, 0, 0, 240);
       glow.addColorStop(0, 'rgba(255, 90, 50, 0.16)');
