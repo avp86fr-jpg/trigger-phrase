@@ -4,22 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#000000" />
   <title>METAWINNERS: TRIGGER PHRASE</title>
-  <meta name="description" content="Chaos's 25-word seed just rugged the timeline. Fan-made old-school arcade light-gun shooter in the browser. Click to shoot. Hold cover to reload. Don't type the phrase." />
-  <link rel="canonical" href="https://avp86fr-jpg.github.io/trigger-phrase/" />
-  <meta property="og:type" content="website" />
-  <meta property="og:title" content="METAWINNERS: TRIGGER PHRASE" />
-  <meta property="og:description" content="Chaos's 25-word seed just rugged the timeline. Fan-made old-school arcade light-gun shooter in the browser. Click to shoot. Hold cover to reload. Don't type the phrase." />
-  <meta property="og:url" content="https://avp86fr-jpg.github.io/trigger-phrase/" />
-  <meta property="og:image" content="https://avp86fr-jpg.github.io/trigger-phrase/assets/og-cover.jpg" />
-  <meta property="og:image:width" content="1200" />
-  <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="METAWINNERS: TRIGGER PHRASE cover art" />
-  <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="METAWINNERS: TRIGGER PHRASE" />
-  <meta name="twitter:description" content="Chaos's 25-word seed just rugged the timeline. Fan-made old-school arcade light-gun shooter in the browser. Click to shoot. Hold cover to reload. Don't type the phrase." />
-  <meta name="twitter:image" content="https://avp86fr-jpg.github.io/trigger-phrase/assets/og-cover.jpg" />
   <link rel="icon" href="assets/ui/favicon.png" />
+  <link rel="apple-touch-icon" href="assets/ui/favicon.png" />
+  <link rel="manifest" href="manifest.webmanifest" />
   <link rel="stylesheet" href="css/game.css" />
 </head>
 <body>
@@ -28,11 +19,16 @@
     <div id="ui">
       <button type="button" id="btnCover" aria-label="Hold to take cover and reload">HOLD COVER</button>
       <div id="rightBtns">
+        <button type="button" id="btnFs" aria-label="Full screen" aria-pressed="false">FULL</button>
         <button type="button" id="btnMute" aria-label="Mute">BGM</button>
         <button type="button" id="btnPause" aria-label="Pause">II</button>
       </div>
     </div>
     <div id="tiltHint">ROTATE FOR THE FULL STAGE</div>
+    <div id="iosHint" hidden>
+      <p>For a full-screen game, tap Share, then Add to Home Screen.</p>
+      <button type="button" id="iosHintDismiss">OK</button>
+    </div>
     <div id="boot">
       <div class="boot-card">
         <div class="boot-kicker">METAWINNERS</div>

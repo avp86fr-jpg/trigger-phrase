@@ -14,6 +14,9 @@
   const $mute = document.getElementById('btnMute');
   const $pause = document.getElementById('btnPause');
   const $right = document.getElementById('rightBtns');
+  const $fs = document.getElementById('btnFs');
+  const $iosHint = document.getElementById('iosHint');
+  const $iosHintDismiss = document.getElementById('iosHintDismiss');
 
   const IM = {};
   const off = document.createElement('canvas');
@@ -543,7 +546,83 @@
     return el === $coverBtn || $coverBtn.contains(el);
   }
   function isUiTarget(el) {
-    return el === $mute || el === $pause || $mute.contains(el) || $pause.contains(el);
+    return el === $mute || el === $pause || el === $fs || el === $iosHint || el === $iosHintDismiss
+      || ($mute && $mute.contains(el)) || ($pause && $pause.contains(el))
+      || ($fs && $fs.contains(el)) || ($iosHint && $iosHint.contains(el));
+  }
+
+  function isAppleTouch() {
+    return /iP(hone|ad|od)/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }
+  function fsApiEnabled() {
+    return !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+  }
+  function isFs() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement || document.documentElement.classList.contains('pseudo-fs'));
+  }
+  function isMobilePlay() {
+    return window.matchMedia('(pointer: coarse)').matches
+      || window.matchMedia('(hover: none) and (max-width: 1024px)').matches
+      || !!(G.pointer && G.pointer.touch);
+  }
+  function tryLockLandscape() {
+    try {
+      const o = screen.orientation;
+      if (o && o.lock) o.lock('landscape').catch(function () {});
+    } catch (err) {}
+  }
+  function showA2hs(on) {
+    if (!$iosHint) return;
+    if (on && isAppleTouch()) $iosHint.hidden = false;
+    else $iosHint.hidden = true;
+  }
+  function syncFsBtn() {
+    const on = isFs();
+    document.body.classList.toggle('fs-on', on);
+    if ($fs) {
+      $fs.setAttribute('aria-pressed', on ? 'true' : 'false');
+      $fs.textContent = on ? 'EXIT' : (document.body.classList.contains('mode-title') ? 'FULL SCREEN' : 'FULL');
+      $fs.setAttribute('aria-label', on ? 'Exit full screen' : 'Full screen');
+    }
+    layout();
+  }
+  async function tryEnterFullscreen() {
+    const el = document.documentElement;
+    try {
+      if (fsApiEnabled()) {
+        if (el.requestFullscreen) await el.requestFullscreen.call(el);
+        else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      } else {
+        el.classList.add('pseudo-fs');
+        document.body.classList.add('pseudo-fs');
+        showA2hs(true);
+      }
+    } catch (err) {
+      el.classList.add('pseudo-fs');
+      document.body.classList.add('pseudo-fs');
+      if (isAppleTouch()) showA2hs(true);
+    }
+    tryLockLandscape();
+    syncFsBtn();
+  }
+  async function exitFullscreen() {
+    try {
+      if (document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen();
+      else if (document.webkitFullscreenElement && document.webkitExitFullscreen) document.webkitExitFullscreen();
+    } catch (err) {}
+    document.documentElement.classList.remove('pseudo-fs');
+    document.body.classList.remove('pseudo-fs');
+    showA2hs(false);
+    syncFsBtn();
+  }
+  function toggleFullscreen() {
+    if (isFs()) exitFullscreen();
+    else tryEnterFullscreen();
+  }
+  function maybeOfferFullscreen() {
+    if (isFs()) return;
+    if (isMobilePlay() || isAppleTouch()) tryEnterFullscreen();
   }
 
   function setHiding(v) {
@@ -584,6 +663,7 @@
       setHiding(true); e.preventDefault();
     }
     if (e.code === 'KeyM') { TPAudio.toggleMute(); syncMute(); }
+    if (e.code === 'KeyF') { toggleFullscreen(); e.preventDefault(); }
     if (e.code === 'Escape' || e.code === 'KeyP') togglePause();
     if (e.code === 'Enter' && (G.mode === 'title' || G.mode === 'comic' || G.mode === 'result' || G.mode === 'intro' || G.mode === 'stagecard' || G.mode === 'credits' || G.mode === 'settings')) onTap(W / 2, H / 2);
   });
@@ -593,6 +673,10 @@
   $coverBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); setHiding(true); });
   $coverBtn.addEventListener('pointerup', (e) => { e.preventDefault(); e.stopPropagation(); setHiding(false); });
   $coverBtn.addEventListener('pointerleave', () => setHiding(false));
+  if ($fs) $fs.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); toggleFullscreen(); });
+  if ($iosHintDismiss) $iosHintDismiss.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); showA2hs(false); });
+  document.addEventListener('fullscreenchange', () => { if (isFs()) tryLockLandscape(); syncFsBtn(); });
+  document.addEventListener('webkitfullscreenchange', () => { if (isFs()) tryLockLandscape(); syncFsBtn(); });
   $mute.addEventListener('click', (e) => { e.stopPropagation(); TPAudio.unlock(); TPAudio.toggleMute(); syncMute(); });
   $pause.addEventListener('click', (e) => { e.stopPropagation(); togglePause(); });
 
@@ -627,6 +711,9 @@
       } else G.transT = 0.32;
       layout();
     }
+    document.body.classList.toggle('mode-title', mode === 'title');
+    document.body.dataset.mode = mode;
+    syncFsBtn();
     if (mode === 'title') { showHud(false); TPAudio.playMusic('title'); if (!G.stingPlayed) { G.stingPlayed = true; try { TPAudio.sting(); } catch (e) {} } }
     if (mode === 'intro' || mode === 'comic' || mode === 'select' || mode === 'result' || mode === 'stagecard' || mode === 'credits' || mode === 'settings') showHud(false);
     if (mode === 'play') showHud(true);
@@ -665,6 +752,7 @@
   function startStory() {
     TPAudio.ui();
     TPAudio.unlock();
+    maybeOfferFullscreen();
     if (!G.save.intro) {
       openComic(TPStages.COMICS.intro, () => { G.save.intro = true; writeSave(); beginStage(0); });
     } else {
@@ -4008,6 +4096,7 @@
     }
     if (!G.stage) return;
     const start = () => {
+      maybeOfferFullscreen();
       TPAudio.playMusic((window.TPFeel && TPFeel.eraTheme(G.stage)) || G.stage.music || 'woods');
       go('play');
     };
@@ -4053,6 +4142,7 @@
     applySettingsChrome, diffCfg, ensureBox, stepSim, skipPresentation,
     spawnEntity, setWeapon, tryRhythmReload, startBoss, ensureStageAssets, prefetchStage,
     viewXform, canvasToWorld, worldToCanvas, toWorld,
+    toggleFullscreen, tryEnterFullscreen, exitFullscreen, isFs,
     get mode() { return G.mode; },
     get player() { return G.player; },
     get entities() { return G.entities; },

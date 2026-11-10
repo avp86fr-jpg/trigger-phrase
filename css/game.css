@@ -10,6 +10,9 @@ html, body {
   position: fixed; inset: 0;
   display: flex; align-items: center; justify-content: center;
   background: #000;
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
 }
 #game {
   display: block;
@@ -56,11 +59,13 @@ html, body {
   position: absolute;
   right: max(14px, env(safe-area-inset-right));
   top: max(14px, env(safe-area-inset-top));
-  display: none;
+  display: flex;
   flex-direction: column;
   gap: 8px;
+  z-index: 4;
 }
-#rightBtns.vis { display: flex; }
+#btnMute, #btnPause { display: none; }
+#rightBtns.vis #btnMute, #rightBtns.vis #btnPause { display: block; }
 #rightBtns button {
   width: 48px; height: 48px;
   border-radius: 10px;
@@ -69,6 +74,61 @@ html, body {
   color: #fff;
   font-size: 18px;
   font-family: Oswald, sans-serif;
+}
+#btnFs {
+  width: auto;
+  min-width: 48px;
+  padding: 0 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+body.mode-title #btnFs {
+  min-width: 132px;
+  height: 54px;
+  font-size: 16px;
+  letter-spacing: 0.1em;
+  background: rgba(10,8,16,0.82);
+  border-color: rgba(255, 220, 140, 0.65);
+  color: #ffe7b0;
+}
+#iosHint {
+  position: absolute;
+  left: 50%;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(420px, 90vw);
+  background: rgba(8,8,14,0.92);
+  border: 1px solid rgba(255,220,140,0.4);
+  color: #ffe7b0;
+  font-family: Oswald, sans-serif;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  text-align: center;
+  padding: 14px 16px 12px;
+  border-radius: 12px;
+  z-index: 6;
+}
+#iosHint[hidden] { display: none !important; }
+#iosHint p { margin: 0 0 10px; }
+#iosHintDismiss {
+  pointer-events: auto;
+  border: 1px solid rgba(255,220,140,0.6);
+  background: rgba(40,20,10,0.8);
+  color: #ffe7b0;
+  font-family: Anton, sans-serif;
+  letter-spacing: 0.08em;
+  padding: 6px 16px;
+  border-radius: 8px;
+}
+html.pseudo-fs, html.pseudo-fs body, html.pseudo-fs #wrap {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  height: 100dvh !important;
+  overflow: hidden !important;
+  background: #000;
 }
 #boot {
   position: absolute; inset: 0;
@@ -112,17 +172,22 @@ html, body {
   display: none;
   position: absolute;
   left: 0; right: 0;
-  top: 8px;
+  top: auto;
+  bottom: max(10px, env(safe-area-inset-bottom));
   text-align: center;
   font-family: Oswald, sans-serif;
-  letter-spacing: 0.14em;
-  font-size: 11px;
-  color: rgba(255,230,176,0.55);
+  letter-spacing: 0.18em;
+  font-size: 9px;
+  font-weight: 500;
+  color: rgba(255,230,176,0.32);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8);
   pointer-events: none;
+  z-index: 3;
 }
 @media (orientation: portrait) and (max-aspect-ratio: 3/4) {
   #tiltHint { display: block; }
 }
+body.fs-on #tiltHint, html.pseudo-fs #tiltHint { display: none !important; }
 
 #btnCover.lefty {
   left: auto;
@@ -132,11 +197,9 @@ html, body {
   right: auto;
   left: max(14px, env(safe-area-inset-left));
 }
-#tiltHint {
-  top: max(8px, env(safe-area-inset-top));
-}
-#wrap {
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+#rightBtns {
+  top: max(14px, env(safe-area-inset-top));
+  right: max(14px, env(safe-area-inset-right));
 }
 
 /* Portrait comics fill the phone; hide the gameplay tilt hint. */

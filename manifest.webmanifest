@@ -1,0 +1,19 @@
+{
+  "name": "METAWINNERS: TRIGGER PHRASE",
+  "short_name": "TRIGGER PHRASE",
+  "description": "Fan-made old-school arcade light-gun shooter in the browser. Click to shoot. Hold cover to reload.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "assets/ui/favicon.png",
+      "sizes": "256x256",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
