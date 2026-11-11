@@ -80,7 +80,7 @@
 
   function defaultSave() {
     return {
-      unlocked: 1, grades: {}, words: [], best: {}, totalBest: 0, intro: false,
+      unlocked: 1, grades: {}, words: [], recovered: [], best: {}, totalBest: 0, intro: false,
       difficulty: 'normal', volMaster: 1, volSfx: 1, volMus: 1,
       lefty: false, reduced: false, tutorialDone: false, checkpoint: 0,
     };
@@ -95,6 +95,12 @@
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(G.save)); } catch (e) {}
   }
   G.save = loadSave();
+  // Migrate old saves by stage completion, not unique word values (NOT/YOUR repeat).
+  G.save.recovered = [...new Set([
+    ...(Array.isArray(G.save.recovered) ? G.save.recovered : []),
+    ...TPStages.STAGES.filter(st => st.id < G.save.unlocked || G.save.grades[st.id]).map(st => st.id)
+  ])].filter(id => Number.isInteger(id) && id >= 1 && id <= 25).sort((a, b) => a - b);
+  G.save.words = G.save.recovered.map(id => TPStages.WORDS[id - 1]);
 
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const lerp = (a, b, t) => a + (b - a) * t;
@@ -116,12 +122,15 @@
   }
 
   const ASSET_PATHS = Object.create(null);
-  const inflight = Object.create(null);
+  // Share a single decode/rasterization across aliases and concurrent stage loads.
+  const imageLoads = new Map();
   const partPool = [];
   const _hitList = [];
   const _drawList = [];
 
-  function catalog(k, src) { if (k && src) ASSET_PATHS[k] = src; }
+  function catalog(k, src) {
+    if (k && src) ASSET_PATHS[k] = (window.TPAssetAliases && window.TPAssetAliases[src]) || src;
+  }
 
   function capFor(src) {
     if (!(G.loFi || (G.save && G.save.reduced))) return 0;
@@ -139,15 +148,22 @@
     cv._src = src || img.src || '';
     return cv;
   }
-  async function loadImage(src) {
+  async function loadImage(src, cap = capFor(src)) {
     const img = new Image();
-    img.decoding = 'sync';
-    img.src = src;
-    try { await img.decode(); }
-    catch (e) {
-      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+    img.decoding = 'async';
+    // Register before setting src: cached loads and errors can settle immediately.
+    await new Promise((resolve, reject) => {
+      img.onload = () => { img.onload = img.onerror = null; resolve(); };
+      img.onerror = () => {
+        img.onload = img.onerror = null;
+        reject(new Error('Failed to load image: ' + src));
+      };
+      img.src = src;
+    });
+    if (img.decode) {
+      try { await img.decode(); }
+      catch (e) { if (!img.naturalWidth) throw e; }
     }
-    const cap = capFor(src);
     if (cap && Math.max(img.width, img.height) > cap) {
       const sc = cap / Math.max(img.width, img.height);
       const cv = document.createElement('canvas');
@@ -169,18 +185,20 @@
     if (IM[k]) return IM[k];
     const src = ASSET_PATHS[k];
     if (!src) return null;
-    if (!inflight[k]) {
-      inflight[k] = loadImage(src).then((img) => {
-        IM[k] = img;
-        delete inflight[k];
-        return img;
-      }).catch((e) => {
+    // Reduced and full-size rasters must not share a cache entry after a resize.
+    const cap = capFor(src);
+    const cacheKey = src + '@' + cap;
+    if (!imageLoads.has(cacheKey)) {
+      const pending = loadImage(src, cap).catch((e) => {
         console.warn('missing', k, src);
-        delete inflight[k];
+        imageLoads.delete(cacheKey); // A later stage visit can retry transient failures.
         return null;
       });
+      imageLoads.set(cacheKey, pending);
     }
-    return inflight[k];
+    const img = await imageLoads.get(cacheKey);
+    if (img) IM[k] = img;
+    return img;
   }
 
   function fillCatalog() {
@@ -409,31 +427,32 @@
       { family: 'Oswald', url: 'assets/fonts/Oswald-Variable.ttf' },
       { family: 'Orbitron', url: 'assets/fonts/Orbitron-Variable.ttf' },
     ];
-    let done = 0;
-    const totalHint = 40;
-    for (const f of fontList) {
-      try {
-        const face = new FontFace(f.family, `url(${f.url})`);
-        await face.load();
-        document.fonts.add(face);
-      } catch (e) { console.warn('font', f.family, e); }
-      done++;
-      $fill.style.width = (10 * done / fontList.length) + '%';
-    }
-    $msg.textContent = 'LOADING ART';
     fillCatalog();
     layout();
     const keys = CORE_KEYS.filter((k) => ASSET_PATHS[k]);
-    let n = 0;
-    await Promise.all(keys.map(async (k) => {
-      try { IM[k] = await loadImage(ASSET_PATHS[k]); }
-      catch (e) { console.warn('missing', k, ASSET_PATHS[k]); }
-      n++;
-      $fill.style.width = (10 + 90 * n / Math.max(1, keys.length)) + '%';
-    }));
+    let done = 0;
+    const total = fontList.length + keys.length;
+    const advance = () => {
+      done++;
+      $fill.style.width = (100 * done / total) + '%';
+    };
+    // Fonts and core art are independent; avoid five font request round trips
+    // before starting any art. All fonts are still ready before canvas text draws.
+    $msg.textContent = 'LOADING FONTS AND ART';
+    await Promise.all([
+      ...fontList.map(async (f) => {
+        try {
+          const face = new FontFace(f.family, `url(${f.url})`);
+          await face.load();
+          document.fonts.add(face);
+        } catch (e) { console.warn('font', f.family, e); }
+        advance();
+      }),
+      ...keys.map(async (k) => { await ensureKey(k); advance(); })
+    ]);
     // Warm the first stage in the background so Story/Continue feels instant.
     prefetchStage(0);
-        makeHalftone();
+    makeHalftone();
     layout();
     $msg.textContent = 'READY';
     $fill.style.width = '100%';
@@ -1132,10 +1151,10 @@
     G.player = {
       hp: D.hp, maxHp: D.hp, ammo: 6, maxAmmo: 6,
       reloadT: 0, score: 0, combo: 0, comboT: 0,
-      shots: 0, hits: 0, civHits: 0, maxCombo: 0,
+      shots: 0, hits: 0, accurateShots: 0, civHits: 0, maxCombo: 0,
       lives: D.lives, inv: 0, weapon: 'pistol',
       kills: 0, headshots: 0, timeBonus: 0, killScore: 0, civPenalty: 0, deaths: 0,
-      secrets: 0, perfectReloads: 0, rhythmLock: 0,
+      secrets: 0, rescued: 0, perfectReloads: 0, rhythmLock: 0,
     };
     G.reloadBeat = 0; G.reloadSweet = 0;
     G.secretGot = false;
@@ -1148,6 +1167,7 @@
     G.railX = 0; G.gunKick = 0; G.slowMo = 0; G.bossIntro = 0; G.stageT = 0;
     G.bump = 0; G.bumpT = 0.8; G.whip = [];
     G.assetReady = false;
+    G.waveRest = 0;
     const w0 = st.waves[0];
     if (w0 && w0.hint) { G.hint = w0.hint; G.hintT = 2.4; }
     const assetsP = ensureStageAssets(index).then(() => { G.assetReady = true; prefetchStage(index + 1); });
@@ -1228,12 +1248,13 @@
     if (G.hideAmt > 0.55) return;
     const p = G.player;
     if (!p) return;
+    if ((p.fireCd || 0) > 0) return;
     if (p.ammo <= 0) { TPAudio.dry(); announce('RELOAD!', 'warn'); flashShells(); return; }
     const w = weaponCfg();
     p.ammo--;
     p.shots++;
     p.comboT = Math.max(p.comboT, 0);
-    p.fireCd = w.rate || 0;
+    p.fireCd = w.rate || (p.weapon === 'shotgun' ? 0.38 : 0.14);
     TPAudio.shot();
     haptic(18);
     G.shake = Math.max(G.shake, w.pierce ? 10 : 7);
@@ -1279,7 +1300,8 @@
         damageEntity(e, px, py, head, { weak: weak, dmg: w.dmg || 1 });
       }
     }
-    if (!any) { p.combo = 0; p.comboT = 0; }
+    if (any) p.accurateShots++;
+    else { p.combo = 0; p.comboT = 0; }
     if (p.ammo <= 0 && p.weapon !== 'pistol') revertPistol();
   }
 
@@ -1355,6 +1377,13 @@
     }
     if (e.type === 'bonus' || e.type === 'secret') {
       collectBonus(e, x, y);
+      return;
+    }
+    // A boss commits to an attack behind a visible guard. Wait for recovery,
+    // or use the exposed cyan core in phases 2–3; body-click spam is not a counter.
+    if (e.type === 'boss' && e.state === 'tel' && !extra.weak) {
+      TPAudio.hit();
+      popText(x, y - 40, 'GUARD  ·  COVER', '#ffd056');
       return;
     }
     // Shield goons shrug body shots; head, rail, or broken shield get through
@@ -1500,7 +1529,7 @@
     }
   }
   function tapContinue(x, y) {
-    if (hitBox(x, y, 960, 700, 260, 70) || y > 640) {
+    if (hitBox(x, y, 960, 700, 260, 70)) {
       G.player.hp = G.player.maxHp;
       G.player.ammo = G.player.maxAmmo;
       G.player.inv = 1.5;
@@ -1743,6 +1772,10 @@
   }
 
   function updateWave(dt) {
+    if ((G.waveRest || 0) > 0) {
+      G.waveRest = Math.max(0, G.waveRest - dt);
+      return;
+    }
     G.waveT += dt;
     const waves = G.stage.waves;
     const wave = waves[G.wave];
@@ -1770,7 +1803,12 @@
       G.waveT = 0;
       G.spawnedForWave = false;
       if (G.wave >= waves.length) startBoss();
-      else startDolly();
+      else {
+        G.waveRest = waves[G.wave].rest || 0.85;
+        G.hint = waves[G.wave].name + '  ·  RELOAD'; G.hintT = G.waveRest;
+        G.player.comboT = Math.max(G.player.comboT, G.waveRest + 1.5);
+        startDolly();
+      }
     }
   }
 
@@ -1900,16 +1938,21 @@
         }
       } else if (e.type === 'civilian') {
         e.leaveIn -= dt;
-        if (e.leaveIn <= 0) { e.alive = false; e.state = 'leave'; e.stateT = 0; }
+        if (e.leaveIn <= 0) {
+          e.alive = false; e.state = 'leave'; e.stateT = 0;
+          G.player.rescued = (G.player.rescued || 0) + 1;
+          G.player.score += 250;
+          popText(e.x, e.y - 100, 'SAFE +250', '#8edbff');
+        }
       } else if (e.type === 'enemy' || e.type === 'boss') {
         if (e.type === 'boss' && G.bossIntro > 0) {
           // hold fire during dramatic entrance
         } else if (e.state === 'idle') {
-          // Echo idles long enough that the redesign is visible; other foes keep their cadence.
-          const wait = (e.kind === 'chaos' ? 2.25 : (e.type === 'boss' ? 0.45 : 0.55) * telScale()) + (e.telBias || 0);
+          // Recovery windows vary by boss family; ordinary foes keep a steady cadence.
+          const wait = (e.type === 'boss' ? bossRecovery() : 0.65 * telScale()) + (e.telBias || 0);
           if (e.stateT > wait) {
-            if (e.type === 'enemy' && neighborBusy(e)) {
-              e.telBias = (e.telBias || 0) + 0.26;
+            if (!canTelegraph(e)) {
+              e.stateT = wait;
             } else {
               e.state = 'tel'; e.stateT = 0; e.y = e.plantY || e.y;
             }
@@ -1963,14 +2006,7 @@
       e.x += Math.sin(e.bob * 1.6) * 90 * dt;
       e.y = y0 + Math.sin(e.bob * 2.1) * 36;
     }
-    if (e.role === 'thrower' && e.state === 'idle') {
-      e.throwCd = (e.throwCd || 0) - dt;
-      if (e.throwCd <= 0) {
-        e.throwCd = 1.6;
-        spawnShot(e.x, e.y - 140 * (e.scale || 1), W / 2, H * 0.62, 'bolt', 380, rand(-0.5, 0.5));
-      }
-    }
-    if (e.role === 'sniper' && e.state === 'tel') {
+    if (e.role === 'sniper' && e.state === 'tel' && G.stage.attackStyle === 'bolt') {
       e.laser = true;
     } else e.laser = false;
   }
@@ -1988,36 +2024,54 @@
     if (lost > 0.66 && G.bossPhase < 3) {
       G.bossPhase = 3; e.tel = Math.max(0.42, e.tel - 0.25); e.flash = 1;
       e.scale = (e.baseScale || e.scale) * 1.12; G.shake = 14;
-      announce('PHASE 3 — WEAK POINT + ORBS', 'info');
+      announce('FINAL PHASE  ·  ' + G.stage.bossCounter, 'info');
       try { TPAudio.bark && TPAudio.bark('vera'); } catch (err) {}
     } else if (lost > 0.33 && G.bossPhase < 2) {
       G.bossPhase = 2; e.tel = Math.max(0.55, e.tel - 0.15); e.flash = 1; G.shake = 12;
-      announce('PHASE 2 — AIM THE WEAK POINT', 'info');
-      if (!G.quick) {
+      announce('CORE EXPOSED  ·  AIM FOR CYAN', 'info');
+      if (!G.quick && G.stage.bossPattern === 'summoner') {
         spawnEntity({ t: 0, type: 'enemy', kind: G.stage.enemy, x: 0.22, y: 0.64, scale: 0.85, tel: 0.7 });
-        spawnEntity({ t: 0, type: 'enemy', kind: G.stage.enemy, x: 0.80, y: 0.64, scale: 0.85, tel: 0.7 });
       }
     }
   }
 
+  function canTelegraph(e) {
+    const difficulty = (G.save && G.save.difficulty) || 'normal';
+    const limit = difficulty === 'easy' ? 1 : difficulty === 'hard' ? 3 : 2;
+    const active = G.entities.filter(o => o !== e && o.alive &&
+      (o.type === 'enemy' || o.type === 'boss') && (o.state === 'tel' || o.state === 'shoot'));
+    return active.length < limit && !(e.type === 'enemy' && neighborBusy(e));
+  }
+  function bossRecovery() {
+    const pattern = G.stage && G.stage.bossPattern;
+    return (pattern === 'barrage' || pattern === 'echo' ? 1.5 : pattern === 'duel' ? 1.1 : 1.25) * telScale();
+  }
   function fireEnemy(e) {
-    e.state = 'shoot'; e.stateT = 0; e.recoil = 1.7; e.recoilHold = 0.07; if (e.type === 'boss') e.atkN = (e.atkN || 0) + 1;
-    TPAudio.enemyShot();
-    haptic(8);
-    // Muzzle sits on the weapon, aimed at the player/camera — not off to the side.
-    const originX = e.x;
-    const originY = e.y - 250 * (e.scale || 1);
-    allocP({ k: 'emuzzle', x: originX, y: originY, life: 0.14, t: 0, s: 2.4, star: 1 });
-    burst(originX, originY, '#fff3a0', 14);
-    burst(originX, originY, '#ff8020', 8);
-    const phase = e.type === 'boss' ? (G.bossPhase || 1) : 1;
-    const bolts = e.type === 'boss' ? (phase === 3 ? 3 : phase === 2 ? 2 : 1) : 1;
-    for (let i = 0; i < bolts; i++) {
-      const spread = (i - (bolts - 1) / 2) * 0.16;
-      spawnShot(originX, originY, W / 2 + Math.sin(spread) * 90, H * 0.94, 'bolt', 680 + phase * 40, spread);
+    e.state = 'shoot'; e.stateT = 0; e.recoil = 1.7; e.recoilHold = 0.07;
+    const boss = e.type === 'boss';
+    if (boss) e.atkN = (e.atkN || 0) + 1;
+    const phase = boss ? (G.bossPhase || 1) : 1;
+    const pattern = boss ? G.stage.bossPattern : null;
+    let kind = (G.stage && G.stage.attackStyle) || 'bolt';
+    let count = 1, speed = kind === 'orb' ? 400 : kind === 'blade' ? 560 : 700;
+    if (boss && pattern === 'barrage') count = phase >= 2 ? 3 : 2;
+    if (boss && pattern === 'pulse') { kind = 'orb'; count = phase === 3 ? 2 : 1; speed = 400; }
+    if (boss && pattern === 'precision') { count = 1; speed = kind === 'orb' ? 470 : 760; }
+    if (boss && pattern === 'duel') { kind = 'blade'; count = phase === 3 ? 2 : 1; speed = 560; }
+    if (boss && pattern === 'echo') {
+      const volley = e.atkN % 2 === 0;
+      kind = volley ? 'orb' : 'bolt'; count = volley ? Math.min(3, phase + 1) : 1;
+      speed = volley ? 410 : 720;
     }
-    if (e.type === 'boss' && phase >= 2) {
-      spawnShot(originX, originY - 16, W / 2 + rand(-40, 40), H * 0.90, 'orb', 280, 0);
+    if (!boss && e.role === 'thrower') { kind = G.stage.attackStyle === 'blade' ? 'blade' : 'orb'; speed = 420; }
+    TPAudio.enemyShot(); haptic(8);
+    const originX = e.x, originY = e.y - 250 * (e.scale || 1);
+    // Energy and thrown steel get their own impact color, never a gun muzzle.
+    if (kind === 'bolt') allocP({ k: 'emuzzle', x: originX, y: originY, life: 0.14, t: 0, s: 2.4, star: 1 });
+    burst(originX, originY, kind === 'orb' ? '#7ef0ff' : kind === 'blade' ? '#d8e5ed' : '#ffe5a0', 10);
+    for (let i = 0; i < count; i++) {
+      const spread = (i - (count - 1) / 2) * 0.16;
+      spawnShot(originX, originY, W / 2 + Math.sin(spread) * 90, H * 0.94, kind, speed, spread);
     }
   }
 
@@ -2028,7 +2082,7 @@
     // Normal/Easy a slightly slower inbound so cover and the telegraph stay fair.
     const difficultySpd = diff === 'hard' ? 1.06 : (diff === 'easy' ? 0.78 : 0.80);
     const spd = (speed || 620) * (isTouchRail() ? 0.84 : (isHardTouch() ? 0.96 : 1)) * difficultySpd;
-    const life = 0.85;
+    const life = Math.hypot(tx - x, ty - y) / Math.max(1, spd) + 0.18;
     G.entities.push({
       type: 'shot', kind: kind || 'bolt', x: x, y: y,
       x0: x, y0: y, tx: tx, ty: ty,
@@ -2082,8 +2136,13 @@
     const res = gradeStage(true);
     const id = G.stage.id;
     G.save.unlocked = Math.max(G.save.unlocked, Math.min(25, id + 1));
-    G.save.grades[id] = res.grade;
-    if (!G.save.words.includes(G.stage.word)) G.save.words.push(G.stage.word);
+    const ranks = ['S', 'A', 'B', 'C', 'D'];
+    const previousGrade = G.save.grades[id];
+    if (!previousGrade || ranks.indexOf(res.grade) < ranks.indexOf(previousGrade)) G.save.grades[id] = res.grade;
+    if (!G.save.recovered.includes(id)) G.save.recovered.push(id);
+    G.save.recovered.sort((a, b) => a - b);
+    G.save.words = G.save.recovered.map(stageId => TPStages.WORDS[stageId - 1]);
+    G.save.checkpoint = Math.min(24, id);
     const prev = G.save.best[id] || 0;
     res.best = Math.max(prev, res.score);
     res.newBest = res.score > prev;
@@ -2101,9 +2160,9 @@
 
   function gradeStage(cleared) {
     const p = G.player;
-    const acc = p.shots ? p.hits / p.shots : 0;
+    const acc = p.shots ? clamp((p.accurateShots || 0) / p.shots, 0, 1) : 0;
     let grade = 'D';
-    if (cleared && acc >= 0.95 && p.civHits === 0) grade = 'S';
+    if (cleared && acc >= 0.95 && p.civHits === 0 && p.deaths === 0) grade = 'S';
     else if (cleared && acc >= 0.85 && p.civHits <= 1) grade = 'A';
     else if (cleared && acc >= 0.7) grade = 'B';
     else if (cleared && acc >= 0.5) grade = 'C';
@@ -2137,13 +2196,11 @@
 
   function selectNodes() {
     const nodes = [];
-    const cols = 9, cw = 176, ch = 168, gapX = 22, gapY = 36;
-    const gridX = 86, gridY = 200;
+    const cols = 5, cw = 300, ch = 128, gapX = 24, gapY = 30;
+    const gridX = 160, gridY = 200;
     for (let i = 0; i < TPStages.STAGES.length; i++) {
       const row = Math.floor(i / cols);
-      let col = i % cols;
-      if (row === 1) col = cols - 1 - col; // snake the rail
-      if (row === 2) col = col;
+      const col = i % cols;
       const x = gridX + col * (cw + gapX);
       const y = gridY + row * (ch + gapY);
       nodes.push({ i, x, y, w: cw, h: ch });
@@ -2269,7 +2326,7 @@
     else if (G.mode === 'comic' && G.comic && G.comic.ready) G.comic.t += dt;
     else if (G.mode === 'title') G.titleT += dt;
     else if (G.mode === 'intro' && G.modeT > 6.4) finishIntro();
-    else if (G.mode === 'stagecard' && G.modeT > 2.5 && G.assetReady !== false) enterPlay();
+    else if (G.mode === 'stagecard' && G.modeT > 4.5 && G.assetReady !== false) enterPlay();
     tickBossIntro(dt);
     const tDraw = performance.now();
     render();
@@ -2890,7 +2947,12 @@
     c.restore();
   }
   function prewarmStage(keys) {
-    const list = (keys || []).map((k) => IM[k]).filter(Boolean);
+    if (G.loFi || (G.save && G.save.reduced)) return;
+    // Only character sprites use outlined(). Backgrounds, covers, portraits and
+    // vehicles were creating unused canvas copies at every stage transition.
+    const list = [...new Set((keys || [])
+      .filter((k) => /^(enemy_|civ_|boss_)/.test(k))
+      .map((k) => IM[k]).filter(Boolean))];
     let i = 0;
     const step = () => {
       const t0 = performance.now();
@@ -3216,6 +3278,7 @@
     }
     // Hit flash is sprite-masked in drawOne / drawBoss — never a rectangle.
     c.restore();
+    if (e.type === 'boss') drawWeakPoint(c, e);
     // telegraph glyph + remaining-time ring (visual only; duration unchanged)
     if (e.alive && e.state === 'tel') {
       c.save();
@@ -3249,12 +3312,12 @@
     }
     if (e.alive && e.type === 'civilian') {
       const tx = e.x, ty = (e.box ? e.box.y - e.box.hh - 20 : e.y - 340);
-      c.fillStyle = e.hostage ? 'rgba(160,40,40,0.88)' : 'rgba(40,90,180,0.85)';
+      c.fillStyle = 'rgba(25,95,165,0.94)';
       rounded(c, tx - 74, ty - 22, 148, 32, 8); c.fill();
       c.fillStyle = '#e8f0ff';
       c.font = '700 16px Oswald, sans-serif';
       c.textAlign = 'center'; c.textBaseline = 'middle';
-      c.fillText(e.hostage ? 'HOSTAGE' : "DON'T SHOOT", tx, ty - 5);
+      c.fillText(e.hostage ? 'PROTECT' : "DON'T SHOOT", tx, ty - 5);
     }
     if (e.alive && e.role === 'shield') {
       const b = e.box;
@@ -3283,10 +3346,10 @@
     }
     if (e.alive && e.type === 'enemy' && e.role && e.role !== 'gun') {
       const tx = e.x, ty = (e.box ? e.box.y + e.box.hh + 16 : e.y + 12);
-      c.fillStyle = 'rgba(0,0,0,0.45)';
-      c.font = '700 11px Oswald, sans-serif';
+      c.fillStyle = '#ffe7b0';
+      c.font = '700 18px Oswald, sans-serif';
       c.textAlign = 'center';
-      c.fillText(String(e.role).toUpperCase(), tx, ty);
+      c.fillText(e.role === 'shield' ? 'AIM HIGH' : e.role === 'thrower' ? 'SHOOT OR COVER' : e.role === 'sniper' && G.stage.attackStyle !== 'bolt' ? 'LOOKOUT' : String(e.role).toUpperCase(), tx, ty);
     }
   }
 
@@ -3338,8 +3401,11 @@
       c.drawImage(img, -w / 2, -hh, w, hh);
       e.box = { x: e.x, y: e.y - hh * e.scale * 0.50, hw: w * e.scale * 0.38, hh: hh * e.scale * 0.42 };
     }
+  }
+
+  function drawWeakPoint(c, e) {
     // Weak-point phases 2–3: a pulsing core the player can see and snipe
-    if (G.bossPhase >= 2 && e.box) {
+    if (e.alive && G.bossPhase >= 2 && e.box) {
       const side = Math.sin((G.t || 0) * 0.7) > 0 ? -0.28 : 0.28;
       const wx = e.box.x + e.box.hw * side * 0.2;
       const wy = e.box.y - e.box.hh * (G.bossPhase >= 3 ? 0.45 : 0.15);
@@ -3347,12 +3413,12 @@
       e.weak = { x: wx, y: wy, r: wr + 8 };
       c.save();
       c.globalCompositeOperation = 'lighter';
-      const grd = c.createRadialGradient(wx - e.x, wy - e.y, 2, wx - e.x, wy - e.y, wr);
+      const grd = c.createRadialGradient(wx, wy, 2, wx, wy, wr);
       grd.addColorStop(0, 'rgba(255,255,240,0.95)');
       grd.addColorStop(0.4, 'rgba(80,240,255,0.7)');
       grd.addColorStop(1, 'rgba(80,240,255,0)');
       c.fillStyle = grd;
-      c.beginPath(); c.arc(wx - e.x, wy - e.y, wr, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.arc(wx, wy, wr, 0, Math.PI * 2); c.fill();
       c.restore();
     } else e.weak = null;
   }
@@ -3371,6 +3437,11 @@
       c.beginPath(); c.arc(0, 0, r + 8, 0, Math.PI * 2); c.fill();
       c.strokeStyle = 'rgba(255,208,86,0.85)'; c.lineWidth = 2;
       c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.stroke();
+    } else if (e.kind === 'blade') {
+      const size = 18 * (e.scale || 1);
+      c.fillStyle = '#d9f1ff'; c.strokeStyle = '#43657a'; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(size, 0); c.lineTo(-size * 0.7, -size * 0.35);
+      c.lineTo(-size * 0.45, 0); c.lineTo(-size * 0.7, size * 0.35); c.closePath(); c.fill(); c.stroke();
     } else {
       const r = 10 * (e.scale || 1);
       const g = c.createRadialGradient(0, 0, 1, 0, 0, r * 2.2);
@@ -3738,7 +3809,13 @@
     c.fillText('STAGE ' + st.id + '  ' + st.era.toUpperCase(), 100, 32);
     c.font = '600 16px Oswald, sans-serif';
     c.fillStyle = '#b8c0cc';
-    c.fillText(st.year + '  ·  SEEK WORD:  “' + st.word + '”', 100, 62);
+    c.fillText(st.year + '  ·  ' + st.chapter.name + '  ·  SEEK: “' + st.word + '”', 100, 62);
+    if (G.phase === 'waves') {
+      const wave = st.waves[Math.min(G.wave, st.waves.length - 1)];
+      c.fillStyle = st.chapter.color;
+      c.font = '700 ' + cssPx(11) + 'px Oswald, sans-serif';
+      c.fillText((G.wave + 1) + '/' + st.waves.length + '  ·  ' + wave.name, 100, 122);
+    }
 
     c.textAlign = 'right';
     c.fillStyle = '#fff';
@@ -3802,7 +3879,7 @@
       c.fillStyle = '#ffe7b0';
       c.font = '700 16px Oswald, sans-serif';
       c.textAlign = 'center';
-      c.fillText(G.stage.boss.name + '  —  PHASE ' + G.bossPhase, 960, 114);
+      c.fillText(G.stage.boss.name + '  /  ' + G.bossPhase + '  /  ' + (G.boss.state === 'tel' ? 'GUARDING — COVER OR AIM CYAN' : 'OPEN — FIRE'), 960, 114);
     }
 
     if (G.hint && G.hintT > 0) {
@@ -3857,17 +3934,11 @@
     c.save();
     c.translate(x, y); c.scale(sc, sc);
     const words = TPStages.WORDS;
-    const got = new Set(G.save.words);
     c.font = '700 28px Oswald, sans-serif';
     c.textAlign = 'center'; c.textBaseline = 'middle';
     let xx = 0, yy = 0;
     for (let i = 0; i < words.length; i++) {
-      const on = got.has(words[i]) && /* allow duplicates by count */ true;
-      // count occurrences collected vs needed: simpler — highlight if this index < collected length in order
-      const collected = G.save.words;
-      const known = collected.length > i && collected[i] === words[i] || collected.includes(words[i]) && i < collected.length;
-      // Use index-based: words recovered in stage order
-      const lit = G.save.unlocked > i + 1 || (G.save.words.length > i);
+      const lit = G.save.recovered.includes(i + 1);
       const w = 86;
       c.fillStyle = lit ? 'rgba(255,208,86,0.9)' : 'rgba(0,0,0,0.45)';
       rounded(c, xx, yy, w, 36, 6); c.fill();
@@ -3990,7 +4061,7 @@
     c.beginPath();
     nodes.forEach((n, i) => {
       const cx = n.x + n.w / 2, cy = n.y + 36;
-      if (i === 0) c.moveTo(cx, cy); else c.lineTo(cx, cy);
+      if (i % 5 === 0) c.moveTo(cx, cy); else c.lineTo(cx, cy);
     });
     c.stroke();
     c.fillStyle = '#c9d0da';
@@ -4003,12 +4074,17 @@
     c.fillText('TIME RAIL', 960, 56);
     c.fillStyle = 'rgba(255,231,176,0.7)';
     c.font = '600 16px Oswald, sans-serif';
-    c.fillText('STAGE SELECT  ·  25 ERAS', 960, 86);
+    c.fillText('FIVE CHAPTERS  ·  FOLLOW THE WORDS, NOT THE CALENDAR', 960, 86);
     button(c, 140, 120, 160, 48, 'BACK', false, 1);
     for (const n of nodes) {
       const i = n.i, st = TPStages.STAGES[i];
       const x = n.x, y = n.y, cw = n.w, ch = n.h;
       const unlocked = i < G.save.unlocked;
+      if (i % 5 === 0) {
+        c.fillStyle = st.chapter.color; c.font = '700 18px Oswald, sans-serif';
+        c.textAlign = 'left';
+        c.fillText('CHAPTER ' + st.chapter.id + '  /  ' + st.chapter.name, x, y - 12);
+      }
       c.fillStyle = unlocked ? 'rgba(20,16,12,0.92)' : 'rgba(8,8,10,0.8)';
       rounded(c, x, y, cw, ch, 12); c.fill();
       c.strokeStyle = unlocked ? 'rgba(255,208,86,0.35)' : 'rgba(255,255,255,0.08)';
@@ -4025,12 +4101,12 @@
         }
       }
       c.fillStyle = unlocked ? '#ffe7b0' : '#667';
-      c.font = '700 15px Anton, sans-serif';
+      c.font = '700 19px Anton, sans-serif';
       c.textAlign = 'left';
       c.fillText((i + 1) + '. ' + st.boss.name, x + 74, y + 28);
-      c.font = '600 12px Oswald, sans-serif';
+      c.font = '600 16px Oswald, sans-serif';
       c.fillStyle = unlocked ? '#b8c0cc' : '#555';
-      c.fillText(st.year, x + 74, y + 48);
+      c.fillText(st.year, x + 74, y + 52);
       c.fillText(st.era, x + 10, y + 82);
       const g = G.save.grades[st.id];
       if (g) {
@@ -4294,6 +4370,9 @@
     c.fillStyle = '#ffe7b0';
     c.font = '700 22px Oswald, sans-serif';
     c.textAlign = 'left';
+    c.fillStyle = st.chapter.color;
+    c.fillText('CHAPTER ' + st.chapter.id + '  ·  ' + st.chapter.name, 160, 215);
+    c.fillStyle = '#ffe7b0';
     c.fillText('STAGE  ' + st.id + '  ·  ' + st.year, 160, 260);
     c.font = '800 84px Anton, sans-serif';
     c.fillText(st.era.toUpperCase(), 160, 360);
@@ -4305,13 +4384,16 @@
       c.font = '700 20px Oswald, sans-serif';
       c.fillText('RAIL CHASE  ·  ' + st.motion.label.toUpperCase(), 160, 470);
     }
+    c.fillStyle = st.chapter.color;
+    c.font = '600 25px Oswald, sans-serif';
+    c.fillText(st.objective, 160, 510, 800);
     c.fillStyle = '#fff';
     c.font = '700 24px Oswald, sans-serif';
     c.fillText('RECOVER', 160, 560);
     c.fillStyle = '#ffd056';
     c.font = '800 96px Anton, sans-serif';
     c.fillText(st.word, 160, 660);
-    const pre = TPStages.BANTER && TPStages.BANTER[G.stageIndex] && TPStages.BANTER[G.stageIndex].pre;
+    const pre = G.stageIndex % 5 === 0 ? st.chapter.story : TPStages.BANTER && TPStages.BANTER[G.stageIndex] && TPStages.BANTER[G.stageIndex].pre;
     if (pre) {
       c.fillStyle = 'rgba(10,6,8,0.78)';
       c.fillRect(150, 690, Math.min(980, 80 + pre.length * 22), 86);
@@ -4322,7 +4404,7 @@
       c.fillText('CHAOS', 178, 722);
       c.fillStyle = '#ffe7b0';
       c.font = '700 32px Oswald, sans-serif';
-      c.fillText(pre, 178, 760);
+      c.fillText(pre, 178, 760, 850);
     }
     c.restore();
     // VS card slide-in from the right
@@ -4355,7 +4437,7 @@
     c.fillStyle = 'rgba(255,255,255,0.55)';
     c.font = '600 18px Oswald, sans-serif';
     c.textAlign = 'center';
-    c.fillText('CLICK TO CONTINUE', 960, 1020);
+    c.fillText(G.assetReady === false ? 'LOADING STAGE ART' : 'CLICK TO BEGIN  ·  ' + st.bossCounter.toUpperCase(), 960, 1020);
   }
   function drawBossSplash(c) {
     const st = G.stage; if (!st) return;
@@ -4633,7 +4715,7 @@
     else if (G.mode === 'comic' && G.comic && G.comic.ready) G.comic.t += dt;
     else if (G.mode === 'title') G.titleT += dt;
     else if (G.mode === 'intro' && G.modeT > 6.4) finishIntro();
-    else if (G.mode === 'stagecard' && G.modeT > 2.5 && G.assetReady !== false) enterPlay();
+    else if (G.mode === 'stagecard' && G.modeT > 4.5 && G.assetReady !== false) enterPlay();
     tickBossIntro(dt);
   }
   function skipPresentation() {

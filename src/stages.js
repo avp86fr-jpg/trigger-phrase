@@ -63,139 +63,11 @@
     { era: 'The Time Nexus', year: 'All / None', place: 'Where the last word hides', bg: '25_nexus', enemy: 'future', civ: 'future', music: 'future', palette: ['#04060c','#20d0ff','#ffd056'], status: 'hd plate', kit: 'future', motion: { kind: 'rift', speed: 70, label: 'Rift drift' } },
   ];
 
-  function spawn(t, type, kind, x, y, scale, extra) {
-    return Object.assign({ t, type, kind, x, y, scale: scale || 1 }, extra || {});
-  }
-
-  function roleFor(stageIndex, wave, slot) {
-    const i = stageIndex || 0;
-    if (wave === 0) return 'gun';
-    if (wave === 1 && slot === 0 && i >= 2) return 'runner';
-    if (wave === 2 && slot === 0 && i >= 3) return 'shield';
-    if (wave === 2 && slot === 2 && i >= 12) return 'thrower';
-    if (wave === 3 && slot === 0 && i >= 13) return 'sniper';
-    if (wave === 3 && slot === 3 && i >= 19) return 'drone';
-    if (wave === 3 && slot === 1 && i >= 5) return 'runner';
-    if (wave >= 2 && slot === 1 && i >= 14) return 'thrower';
-    return 'gun';
-  }
-
-  function weaponFor(stageIndex) {
-    const cycle = ['shotgun', 'smg', 'rail'];
-    if (stageIndex < 2) return null;
-    return cycle[stageIndex % 3];
-  }
-
-  // Authored entrances for standardWaves: never a generic pop. Cover, doors,
-  // rails, vehicles and drop-ins follow the stage's motion and architecture.
-  function fromFor(si, slot, type) {
-    si = si || 0;
-    const meta = META[si] || {};
-    const m = (meta.motion && meta.motion.kind) || '';
-    const bg = meta.bg || '';
-    if (type === 'civilian') {
-      if (/egypt|casino|garage|lab|nave|medusa|yacht|keep|brass/.test(bg)) return 'door';
-      if (/woods|jungle|grove|bone/.test(bg)) return 'path';
-      return 'path';
-    }
-    const veh = { west_ride: 'vehicle', barge: 'vehicle', airship: 'vehicle', steamtrain: 'rail', yacht: 'vehicle', highway: 'vehicle', maglev: 'rail', rover: 'vehicle', rift: 'drop' };
-    if (m === 'rift' && slot % 3 === 0) return 'drop';
-    if ((m === 'airship' || /nexus|hive|mind|mars/.test(bg)) && slot % 5 === 0) return 'drop';
-    let cycle;
-    if (veh[m]) {
-      const a = veh[m];
-      const b = a === 'rail' ? 'vehicle' : (a === 'drop' ? 'cover' : 'rail');
-      cycle = [a, 'cover', b, 'door'];
-    } else if (/egypt|casino|garage|lab|nave|medusa/.test(bg)) {
-      cycle = ['door', 'cover', 'door', 'path'];
-    } else if (/woods|jungle|grove|bone/.test(bg)) {
-      cycle = ['tree', 'cover', 'path', 'tree'];
-    } else {
-      cycle = ['cover', 'path', 'cover', 'door'];
-    }
-    return cycle[slot % cycle.length];
-  }
-
-  function standardWaves(enemy, civ, difficulty, stageIndex) {
-    const d = difficulty || 1;
-    const si = stageIndex || 0;
-    const tel = Math.max(0.56, 0.90 - Math.min(d, 6) * 0.05);
-    const wpn = weaponFor(si);
-    const pat = si % 5;
-    const flip = (si % 2) === 1;
-    const X = (x) => (flip ? +(1 - x).toFixed(2) : x);
-    // Later stages get a short beat to read the plate; pattern 1/3 stagger more, 2 opens as a pair, 4 holds then flanks.
-    const open = si >= 8 ? 0.10 : 0;
-    const t0 = [0, 0.14, -0.06, 0.10, 0.20][pat];
-    const gap = [0, 0.16, -0.10, 0.22, 0.08][pat];
-    const waves = [
-      {
-        hint: d === 1 ? 'CLICK OR TAP TO SHOOT' : null,
-        camera: { x: 0, zoom: pat === 2 ? 1.10 : 1.06 },
-        spawns: [
-          spawn(0.28 + open + t0, 'enemy', enemy, X(0.28), 0.64, 0.92, { tel, role: 'gun', from: pat === 2 || pat === 4 ? 'cover' : 'ground' }),
-          spawn(0.85 + open + t0 + gap, 'enemy', enemy, X(0.74), 0.60, 0.88, { tel, role: si >= 2 ? 'runner' : 'gun', from: pat === 4 ? 'cover' : 'ground' }),
-        ],
-      },
-      {
-        hint: d === 1 ? 'HOLD COVER TO HIDE & RELOAD  ·  TAP ON THE BEAT FOR A PERFECT RELOAD' : (si >= 1 ? 'WATCH FOR HOSTAGES' : null),
-        camera: { x: flip ? -0.04 : 0.04, zoom: 1.1 },
-        spawns: [
-          spawn(0.18 + open, 'enemy', enemy, X(0.20), 0.62, 0.9, { tel, role: roleFor(si, 1, 0), from: si >= 2 ? 'cover' : 'ground' }),
-          spawn(0.45 + open, 'civilian', civ, X(0.50), 0.66, 0.86, { hostage: true }),
-          spawn(0.72 + open + gap * 0.5, 'enemy', enemy, X(0.78), 0.58, 0.95, { tel, role: 'gun' }),
-          spawn(1.15 + open, 'bonus', 'coin', X(0.62), 0.28, 0.7),
-          spawn(1.45 + open + gap * 0.4, 'enemy', enemy, X(0.44), 0.60, 0.8, { tel: tel - 0.04, role: roleFor(si, 1, 3), from: pat === 1 ? 'cover' : 'ground' }),
-        ],
-      },
-      {
-        camera: { x: flip ? 0.04 : -0.04, zoom: pat === 3 ? 1.10 : 1.14 },
-        spawns: [
-          spawn(0.12 + open, 'enemy', enemy, X(0.16), 0.66, 1.0, { tel: tel - 0.06, role: roleFor(si, 2, 0), hp: roleFor(si, 2, 0) === 'shield' ? 2 : 1, from: si >= 1 ? 'cover' : 'ground' }),
-          spawn(0.38 + open + gap * 0.4, 'enemy', enemy, X(0.40), 0.58, 0.82, { tel, role: 'gun' }),
-          spawn(0.55 + open, 'pickup', si >= 2 && wpn ? wpn : 'health', X(0.62), 0.70, 0.6),
-          spawn(0.78 + open + gap * 0.3, 'enemy', enemy, X(0.82), 0.60, 0.92, { tel: tel - 0.06, role: roleFor(si, 2, 2) }),
-          spawn(1.15 + open, 'civilian', civ, X(0.30), 0.68, 0.84, { hostage: si >= 1 }),
-          spawn(1.35 + open, 'bonus', 'crystal', X(0.18), 0.24, 0.7),
-          spawn(1.55 + open + gap * 0.2, 'enemy', enemy, X(0.58), 0.56, 0.78, { tel: tel - 0.08, role: 'gun', from: (pat === 3 || pat === 4) ? 'cover' : 'ground' }),
-        ],
-      },
-      {
-        camera: { x: flip ? -0.02 : 0.02, zoom: 1.16 },
-        spawns: [
-          spawn(0.08 + open, 'enemy', enemy, X(0.22), 0.60, 0.86, { tel: tel - 0.1, role: roleFor(si, 3, 0), scaleBias: roleFor(si, 3, 0) === 'sniper' ? 0.78 : 1 }),
-          spawn(0.22 + open + gap * 0.3, 'enemy', enemy, X(0.50), 0.56, 0.8, { tel: tel - 0.1, role: roleFor(si, 3, 1), from: 'cover' }),
-          spawn(0.38 + open, 'enemy', enemy, X(0.76), 0.62, 0.96, { tel: tel - 0.1, role: 'gun' }),
-          spawn(0.85 + open, 'bonus', 'coin', X(0.84), 0.22, 0.65),
-          spawn(1.05 + open + gap * 0.2, 'enemy', enemy, X(0.34), 0.66, 1.02, { tel: tel - 0.12, role: roleFor(si, 3, 3), hp: roleFor(si, 3, 3) === 'drone' ? 2 : 1 }),
-          spawn(1.2 + open, 'pickup', 'ammo', X(0.64), 0.72, 0.55),
-          spawn(1.4 + open + gap * 0.25, 'enemy', enemy, X(0.88), 0.58, 0.84, { tel: tel - 0.12, role: 'gun', from: pat === 2 ? 'cover' : 'ground' }),
-        ],
-      },
-    ];
-    let slot = 0;
-    waves.forEach((w) => {
-      (w.spawns || []).forEach((sp) => {
-        if (sp.type === 'enemy' || sp.type === 'civilian') {
-          if (!sp.from || sp.from === 'ground') sp.from = fromFor(si, slot++, sp.type);
-          else slot++;
-        }
-      });
-    });
-    return waves;
-  }
-
   const STAGES = META.map((m, i) => ({
-    id: i + 1,
-    word: WORDS[i],
-    boss: BOSSES[i],
-    ...m,
-    waves: standardWaves(m.enemy, m.civ, 1 + i * 0.25, i),
-    bossHp: [10, 12, 12][Math.min(i, 2)].toString ? [10, 12, 14] : [10, 12, 14],
+    id: i + 1, word: WORDS[i], boss: BOSSES[i], ...m,
+    waves: [], bossHp: 10 + Math.floor(i / 5) * 3 + (i % 5),
     bossPhases: 3,
   }));
-  // fix botched bossHp
-  STAGES.forEach((s, i) => { s.bossHp = 10 + Math.min(i, 8) * 2; });
   const SECRET_SPOTS = [
     [0.08, 0.18], [0.92, 0.16], [0.10, 0.30], [0.88, 0.22], [0.14, 0.20],
     [0.86, 0.18], [0.07, 0.26], [0.93, 0.28], [0.16, 0.14], [0.84, 0.12],
@@ -209,100 +81,6 @@
     s.bossPhases = 3;
     s.weakPoints = true;
   });
-
-  // Refined waves for the polished vertical slice (stages 1-3)
-  STAGES[0].waves = [
-    {
-      hint: 'CLICK OR TAP TO SHOOT',
-      camera: { x: 0, zoom: 1.08 },
-      spawns: [
-        spawn(0.7, 'enemy', 'woods', 0.78, 0.60, 0.92, { tel: 1.15, from: 'porch' }),
-        spawn(2.0, 'enemy', 'woods', 0.22, 0.64, 0.95, { tel: 1.1, from: 'tree' }),
-      ],
-    },
-    {
-      hint: 'HOLD COVER TO HIDE & RELOAD',
-      camera: { x: 0.03, zoom: 1.12 },
-      spawns: [
-        spawn(0.4, 'civilian', 'woods', 0.50, 0.68, 0.9, { from: 'path' }),
-        spawn(1.0, 'enemy', 'woods', 0.18, 0.62, 0.88, { tel: 0.95 }),
-        spawn(1.5, 'enemy', 'woods', 0.74, 0.58, 0.86, { tel: 0.9 }),
-        spawn(2.6, 'enemy', 'woods', 0.58, 0.64, 1.0, { tel: 0.85 }),
-      ],
-    },
-    {
-      camera: { x: -0.03, zoom: 1.16 },
-      spawns: [
-        spawn(0.2, 'enemy', 'woods', 0.14, 0.66, 1.02, { tel: 0.8 }),
-        spawn(0.5, 'enemy', 'woods', 0.40, 0.58, 0.8, { tel: 0.8 }),
-        spawn(0.9, 'pickup', 'health', 0.62, 0.74, 0.55),
-        spawn(1.15, 'enemy', 'woods', 0.84, 0.60, 0.92, { tel: 0.75 }),
-        spawn(2.0, 'civilian', 'woods', 0.30, 0.70, 0.86),
-        spawn(2.4, 'enemy', 'woods', 0.66, 0.56, 0.78, { tel: 0.7 }),
-      ],
-    },
-  ];
-  STAGES[1].waves = [
-    {
-      hint: 'WATCH THE WINDOWS',
-      camera: { x: 0, zoom: 1.06 },
-      spawns: [
-        spawn(0.6, 'enemy', 'west', 0.22, 0.60, 0.95, { tel: 1.0 }),
-        spawn(1.4, 'enemy', 'west', 0.78, 0.62, 0.9, { tel: 0.95 }),
-      ],
-    },
-    {
-      camera: { x: 0.05, zoom: 1.12 },
-      spawns: [
-        spawn(0.3, 'civilian', 'west', 0.48, 0.68, 0.92),
-        spawn(0.8, 'enemy', 'west', 0.16, 0.60, 0.88, { tel: 0.85 }),
-        spawn(1.2, 'enemy', 'west', 0.70, 0.58, 0.86, { tel: 0.85 }),
-        spawn(2.1, 'enemy', 'west', 0.86, 0.64, 1.0, { tel: 0.8 }),
-      ],
-    },
-    {
-      camera: { x: -0.04, zoom: 1.16 },
-      spawns: [
-        spawn(0.2, 'enemy', 'west', 0.20, 0.62, 0.9, { tel: 0.75 }),
-        spawn(0.45, 'enemy', 'west', 0.44, 0.56, 0.8, { tel: 0.75 }),
-        spawn(0.8, 'pickup', 'ammo', 0.60, 0.74, 0.55),
-        spawn(1.1, 'enemy', 'west', 0.82, 0.60, 0.95, { tel: 0.7 }),
-        spawn(1.9, 'civilian', 'west', 0.34, 0.68, 0.84),
-        spawn(2.3, 'enemy', 'west', 0.58, 0.58, 0.86, { tel: 0.68 }),
-      ],
-    },
-  ];
-  STAGES[2].waves = [
-    {
-      hint: 'SPARE THE CIVILIANS',
-      camera: { x: 0, zoom: 1.05 },
-      spawns: [
-        spawn(0.6, 'enemy', 'rome', 0.26, 0.62, 0.95, { tel: 0.95 }),
-        spawn(1.3, 'enemy', 'rome', 0.76, 0.60, 0.9, { tel: 0.9 }),
-      ],
-    },
-    {
-      camera: { x: 0.04, zoom: 1.12 },
-      spawns: [
-        spawn(0.3, 'civilian', 'west', 0.50, 0.68, 0.9),
-        spawn(0.8, 'enemy', 'rome', 0.18, 0.60, 0.88, { tel: 0.8 }),
-        spawn(1.15, 'enemy', 'rome', 0.72, 0.56, 0.84, { tel: 0.8 }),
-        spawn(2.0, 'enemy', 'rome', 0.86, 0.64, 1.02, { tel: 0.75 }),
-      ],
-    },
-    {
-      camera: { x: -0.03, zoom: 1.18 },
-      spawns: [
-        spawn(0.15, 'enemy', 'rome', 0.16, 0.64, 1.0, { tel: 0.7 }),
-        spawn(0.4, 'enemy', 'rome', 0.40, 0.56, 0.8, { tel: 0.7 }),
-        spawn(0.75, 'pickup', 'health', 0.62, 0.74, 0.55),
-        spawn(1.0, 'enemy', 'rome', 0.84, 0.60, 0.92, { tel: 0.65 }),
-        spawn(1.8, 'civilian', 'west', 0.30, 0.70, 0.84),
-        spawn(2.2, 'enemy', 'rome', 0.58, 0.58, 0.86, { tel: 0.62 }),
-      ],
-    },
-  ];
-
 
   const ERA_COMIC = [
     'comic_era_woods', 'comic_era_west', 'comic_era_ancient', 'comic_era_pre',
@@ -321,7 +99,7 @@
         panels: [
           { box: [0, 0, 1, 0.42], bg: 'comic_news', bgAlign: 'top',
             speaker: 'VERA VALE', kicker: 'TIME NEWS',
-            lines: ["Time News. Someone just rug-pulled the calendar.", "History is slipping. Do not refresh."] },
+            lines: ["Time News. Someone just rug-pulled the calendar.", "The rifts follow the words, not the calendar."] },
           { box: [0, 0.445, 0.49, 0.555], bg: 'comic_loss', bgAlign: 'top', bgX: 'left', charAlign: 'left', bgScale: 0.84,
             speaker: 'CHAOS',
             lines: ["That's my seed phrase. Twenty-five words.", "The paper left without me."] },
@@ -407,14 +185,14 @@
     { vera: ["Fire on the Nile, and another YOUR in the ash.", "If a tomb DMs you a form, walk away."], chaos: ["Two YOURs. Zero excuses.", "Don't type it."] },
     { vera: ["Spartans held the line. We held the COINS.", "Bronze is a terrible seed backup."], chaos: ["NOT YOUR KEYS, NOT YOUR COINS.", "Tattoo it on a shield."] },
     { vera: ["She turned soldiers to stone. The word is NEVER.", "Never look. Never type. Never trust a statue."], chaos: ["Never is doing a lot of work in this sentence.", "Good."] },
-    { vera: ["A flying keep, a falling mage, the verb is TYPE.", "Knights, stop shouting the phrase off the walls."], chaos: ["If a wizard asks you to type it, he is a ticket.", "Not a wizard."] },
+    { vera: ["A breached keep, a fallen mage, the verb is TYPE.", "Knights, stop shouting the phrase off the walls."], chaos: ["If a wizard asks you to type it, he is a ticket.", "Not a wizard."] },
     { vera: ["Brass London coughed up THE.", "The phrase is starting to look like a phrase."], chaos: ["THE is not filler. It's the point.", "Stay on the rails."] },
     { vera: ["Superyacht, sunset, one sheikh short of a PHRASE.", "Yacht wifi is still wifi."], chaos: ["Ten words in. The prize is the phrase.", "Not the wet-bar tablet."] },
     { vera: ["Ice age, ice boss, the word is ON.", "As in: on the vault. Off the website."], chaos: ["Cold storage should be colder than this guy.", "Word recovered."] },
     { vera: ["Deep canopy, tiny word: A.", "A website, a form, a very bad idea."], chaos: ["Small word. Huge trap.", "Keep it."] },
     { vera: ["The floor just printed WEBSITE.", "If the URL winks at you, leave the table."], chaos: ["Casino wifi, a seed in the shoe.", "We left the chips."] },
     { vera: ["Fourth and long. The only good play is VERIFY.", "Then verify again. The wifi is a blitz."], chaos: ["I don't do sports metaphors.", "I do exits."] },
-    { vera: ["Pixel highway, word TWICE recovered.", "Insert coin is not a confirmation."], chaos: ["Verify twice. High score once.", "Custody is the real 1-UP."] },
+    { vera: ["Cabinet signal cleared. Word TWICE recovered.", "Insert coin is not a confirmation."], chaos: ["Verify twice. High score once.", "Custody is the real 1-UP."] },
     { vera: ["Glass garage, zero logos, the word is GAS.", "Hypercars make terrible hardware wallets."], chaos: ["If it vrooms, don't type in it.", "Budget the fees."] },
     { vera: ["The lab wanted a host. The headline is FEES.", "They sting. The slime stings more."], chaos: ["If it drips and talks, it is a rug.", "Pay the fee, not the monster."] },
     { vera: ["A velvet nave, a crimson sermon, a word called STING.", "The choir was off-key and on-chain."], chaos: ["Fees sting. Rugs pull.", "Stay in cover."] },
