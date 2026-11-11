@@ -116,12 +116,15 @@
   }
 
   const ASSET_PATHS = Object.create(null);
-  const inflight = Object.create(null);
+  // Share a single decode/rasterization across aliases and concurrent stage loads.
+  const imageLoads = new Map();
   const partPool = [];
   const _hitList = [];
   const _drawList = [];
 
-  function catalog(k, src) { if (k && src) ASSET_PATHS[k] = src; }
+  function catalog(k, src) {
+    if (k && src) ASSET_PATHS[k] = (window.TPAssetAliases && window.TPAssetAliases[src]) || src;
+  }
 
   function capFor(src) {
     if (!(G.loFi || (G.save && G.save.reduced))) return 0;
@@ -139,15 +142,22 @@
     cv._src = src || img.src || '';
     return cv;
   }
-  async function loadImage(src) {
+  async function loadImage(src, cap = capFor(src)) {
     const img = new Image();
-    img.decoding = 'sync';
-    img.src = src;
-    try { await img.decode(); }
-    catch (e) {
-      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+    img.decoding = 'async';
+    // Register before setting src: cached loads and errors can settle immediately.
+    await new Promise((resolve, reject) => {
+      img.onload = () => { img.onload = img.onerror = null; resolve(); };
+      img.onerror = () => {
+        img.onload = img.onerror = null;
+        reject(new Error('Failed to load image: ' + src));
+      };
+      img.src = src;
+    });
+    if (img.decode) {
+      try { await img.decode(); }
+      catch (e) { if (!img.naturalWidth) throw e; }
     }
-    const cap = capFor(src);
     if (cap && Math.max(img.width, img.height) > cap) {
       const sc = cap / Math.max(img.width, img.height);
       const cv = document.createElement('canvas');
@@ -169,18 +179,20 @@
     if (IM[k]) return IM[k];
     const src = ASSET_PATHS[k];
     if (!src) return null;
-    if (!inflight[k]) {
-      inflight[k] = loadImage(src).then((img) => {
-        IM[k] = img;
-        delete inflight[k];
-        return img;
-      }).catch((e) => {
+    // Reduced and full-size rasters must not share a cache entry after a resize.
+    const cap = capFor(src);
+    const cacheKey = src + '@' + cap;
+    if (!imageLoads.has(cacheKey)) {
+      const pending = loadImage(src, cap).catch((e) => {
         console.warn('missing', k, src);
-        delete inflight[k];
+        imageLoads.delete(cacheKey); // A later stage visit can retry transient failures.
         return null;
       });
+      imageLoads.set(cacheKey, pending);
     }
-    return inflight[k];
+    const img = await imageLoads.get(cacheKey);
+    if (img) IM[k] = img;
+    return img;
   }
 
   function fillCatalog() {
@@ -409,31 +421,32 @@
       { family: 'Oswald', url: 'assets/fonts/Oswald-Variable.ttf' },
       { family: 'Orbitron', url: 'assets/fonts/Orbitron-Variable.ttf' },
     ];
-    let done = 0;
-    const totalHint = 40;
-    for (const f of fontList) {
-      try {
-        const face = new FontFace(f.family, `url(${f.url})`);
-        await face.load();
-        document.fonts.add(face);
-      } catch (e) { console.warn('font', f.family, e); }
-      done++;
-      $fill.style.width = (10 * done / fontList.length) + '%';
-    }
-    $msg.textContent = 'LOADING ART';
     fillCatalog();
     layout();
     const keys = CORE_KEYS.filter((k) => ASSET_PATHS[k]);
-    let n = 0;
-    await Promise.all(keys.map(async (k) => {
-      try { IM[k] = await loadImage(ASSET_PATHS[k]); }
-      catch (e) { console.warn('missing', k, ASSET_PATHS[k]); }
-      n++;
-      $fill.style.width = (10 + 90 * n / Math.max(1, keys.length)) + '%';
-    }));
+    let done = 0;
+    const total = fontList.length + keys.length;
+    const advance = () => {
+      done++;
+      $fill.style.width = (100 * done / total) + '%';
+    };
+    // Fonts and core art are independent; avoid five font request round trips
+    // before starting any art. All fonts are still ready before canvas text draws.
+    $msg.textContent = 'LOADING FONTS AND ART';
+    await Promise.all([
+      ...fontList.map(async (f) => {
+        try {
+          const face = new FontFace(f.family, `url(${f.url})`);
+          await face.load();
+          document.fonts.add(face);
+        } catch (e) { console.warn('font', f.family, e); }
+        advance();
+      }),
+      ...keys.map(async (k) => { await ensureKey(k); advance(); })
+    ]);
     // Warm the first stage in the background so Story/Continue feels instant.
     prefetchStage(0);
-        makeHalftone();
+    makeHalftone();
     layout();
     $msg.textContent = 'READY';
     $fill.style.width = '100%';
@@ -2890,7 +2903,12 @@
     c.restore();
   }
   function prewarmStage(keys) {
-    const list = (keys || []).map((k) => IM[k]).filter(Boolean);
+    if (G.loFi || (G.save && G.save.reduced)) return;
+    // Only character sprites use outlined(). Backgrounds, covers, portraits and
+    // vehicles were creating unused canvas copies at every stage transition.
+    const list = [...new Set((keys || [])
+      .filter((k) => /^(enemy_|civ_|boss_)/.test(k))
+      .map((k) => IM[k]).filter(Boolean))];
     let i = 0;
     const step = () => {
       const t0 = performance.now();

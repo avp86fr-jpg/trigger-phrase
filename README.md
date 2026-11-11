@@ -22,3 +22,14 @@ Fan-made tribute. Not affiliated with MetaWinners, MetaWin, HIT, or any studio. 
 ## Local run
 
 Serve this folder with any static server (for example `python3 -m http.server`) and open `index.html`.
+
+## Asset optimization checks
+
+After adding or changing game images, run `node scripts/build-asset-aliases.cjs`.
+This regenerates `src/asset-aliases.js` from SHA-256 hashes of the current art.
+Only byte-identical files share a URL; original files and animation pose keys remain available.
+
+Run `node scripts/build-asset-aliases.cjs --check` and `node --test tests/assets.test.cjs`
+before deploying. The tests check alias freshness and byte equality, loader failure/retry
+behavior, parallel startup, and all 25 stage loading/render paths with mocked browser
+primitives. Printed asset budgets are source-file totals, not measured network timings or FPS.
